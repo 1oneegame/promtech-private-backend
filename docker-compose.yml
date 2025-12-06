@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  # MongoDB Service
+  mongodb:
+    image: mongo:7.0
+    container_name: integrity_mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+      MONGO_INITDB_DATABASE: integrity_os
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    networks:
+      - integrity_network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # IntegrityOS Backend Service
+  backend:
+    build: .
+    container_name: integrity_backend
+    ports:
+      - "8000:8000"
+    environment:
+      MONGODB_URI: mongodb://admin:password@mongodb:27017/integrity_os
+      MONGODB_DATABASE: integrity_os
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      LOG_LEVEL: INFO
+    volumes:
+      - ./data:/app/data
+      - ./:/app
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - integrity_network
+    command: ["python", "app.py"]
+
+volumes:
+  mongodb_data:
+  mongodb_config:
+
+networks:
+  integrity_network:
+    driver: bridge

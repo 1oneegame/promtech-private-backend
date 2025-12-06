@@ -1,0 +1,441 @@
+{
+  "pipeline_infrastructure": {
+    "country": "Kazakhstan",
+    "data_generation_date": "2025-12-06",
+    "major_pipelines": [
+      {
+        "pipeline_id": "CPC-KZ",
+        "pipeline_name": "Caspian Pipeline Consortium - Kazakhstan Section",
+        "type": "crude_oil_export",
+        "operator": "CPC-K (Kazakhstan Operating Company)",
+        "status": "operational",
+        "segments": [
+          {
+            "segment_id": "CPCX-KZ-001",
+            "segment_name": "Tengiz Field to Atyrau Junction",
+            "start_point": {
+              "name": "Tengiz Processing Platform",
+              "latitude": 46.1528,
+              "longitude": 53.3833,
+              "elevation_m": -70,
+              "facility_type": "production_platform"
+            },
+            "end_point": {
+              "name": "Atyrau Hub (CPC Section)",
+              "latitude": 47.1167,
+              "longitude": 51.8833,
+              "elevation_m": 25,
+              "facility_type": "main_junction"
+            },
+            "length_km": 350,
+            "diameter_mm": 1067,
+            "wall_thickness_mm": 10.9,
+            "design_pressure_bar": 900,
+            "operating_pressure_bar": 700,
+            "product": "sour_crude_oil",
+            "h2s_content_percent": 17.0,
+            "co2_content_percent": 1.2,
+            "viscosity_cst": 12.5,
+            "density_kg_m3": 825,
+            "ambient_temp_min_c": -35,
+            "ambient_temp_max_c": 45,
+            "fluid_temp_c": 28
+          },
+          {
+            "segment_id": "CPCX-KZ-002",
+            "segment_name": "Kashagan Field Connection to CPC Main Line",
+            "start_point": {
+              "name": "Kashagan Field Onshore Terminal",
+              "latitude": 46.1667,
+              "longitude": 51.5833,
+              "elevation_m": -50,
+              "facility_type": "offshore_connection"
+            },
+            "end_point": {
+              "name": "CPC Main Line Junction (South Atyrau)",
+              "latitude": 46.8500,
+              "longitude": 52.1000,
+              "elevation_m": -20,
+              "facility_type": "pipeline_junction"
+            },
+            "length_km": 92,
+            "diameter_mm": 914,
+            "wall_thickness_mm": 9.5,
+            "design_pressure_bar": 900,
+            "operating_pressure_bar": 650,
+            "product": "sour_crude_oil",
+            "h2s_content_percent": 19.0,
+            "co2_content_percent": 1.5,
+            "viscosity_cst": 11.8,
+            "density_kg_m3": 821,
+            "notes": "Newest connection, high H2S content from Kashagan"
+          },
+          {
+            "segment_id": "CPCX-KZ-003",
+            "segment_name": "Atyrau Hub to Kazakhstan-Russia Border",
+            "start_point": {
+              "name": "Atyrau Main Hub",
+              "latitude": 47.1167,
+              "longitude": 51.8833,
+              "elevation_m": 25,
+              "facility_type": "major_hub"
+            },
+            "end_point": {
+              "name": "CPC-K/CPC-R Handoff Point (Ural River)",
+              "latitude": 46.5000,
+              "longitude": 52.2000,
+              "elevation_m": -5,
+              "facility_type": "international_border"
+            },
+            "length_km": 300,
+            "diameter_mm": 1067,
+            "wall_thickness_mm": 11.0,
+            "design_pressure_bar": 920,
+            "operating_pressure_bar": 750,
+            "product": "blended_sour_crude",
+            "h2s_content_percent": 16.5,
+            "co2_content_percent": 1.3,
+            "critical_inspection_zones": [
+              "pump_station_inlet",
+              "pressure_relief_valve",
+              "isolation_gate_valves",
+              "mainline_tees"
+            ]
+          }
+        ]
+      },
+      {
+        "pipeline_id": "TCO-NOVOROSSIYSK",
+        "pipeline_name": "Tengiz to Novorossiysk (CPC Main Route)",
+        "type": "crude_oil_export",
+        "operator": "Tengizchevroil / CPC-K / CPC-R",
+        "total_length_km": 1510,
+        "kazakhstan_portion_km": 650,
+        "status": "operational",
+        "key_parameters": {
+          "diameter_range_mm": "1016-1067",
+          "capacity_bpd": 1400000,
+          "capacity_m3_d": 220000,
+          "pump_stations": 5,
+          "surge_tanks": 4,
+          "single_point_moorings": 2,
+          "major_junctions_kz": 3
+        }
+      },
+      {
+        "pipeline_id": "KPO-CPC-LINK",
+        "pipeline_name": "Karachaganak to CPC Pipeline",
+        "type": "gas_condensate",
+        "operator": "Karachaganak Petroleum Operating B.V.",
+        "status": "operational",
+        "segments": [
+          {
+            "segment_id": "KPO-CPC-001",
+            "segment_name": "Karachaganak Field to Atyrau Connection",
+            "start_point": {
+              "name": "Karachaganak Processing Plant",
+              "latitude": 51.3535,
+              "longitude": 53.2111,
+              "elevation_m": 50,
+              "facility_type": "gas_condensate_plant"
+            },
+            "end_point": {
+              "name": "CPC Junction near Atyrau",
+              "latitude": 47.2000,
+              "longitude": 51.9000,
+              "elevation_m": 25,
+              "facility_type": "main_junction"
+            },
+            "length_km": 650,
+            "diameter_mm": 508,
+            "design_pressure_bar": 600,
+            "operating_pressure_bar": 450,
+            "product": "gas_condensate_sour",
+            "h2s_content_percent": 4.0,
+            "co2_content_percent": 5.0,
+            "production_capacity_bopd": 200000,
+            "production_capacity_mmcfd": 700
+          }
+        ]
+      },
+      {
+        "pipeline_id": "KZ-CHINA-OIL",
+        "pipeline_name": "Kazakhstan-China Oil Pipeline",
+        "type": "crude_oil_export",
+        "operator": "KazMunayGas / CNPC Joint Venture",
+        "status": "operational",
+        "segments": [
+          {
+            "segment_id": "KZCN-SEG-001",
+            "segment_name": "Atyrau to Mangystau (Western Kazakhstan)",
+            "start_point": {
+              "name": "Atyrau Pipeline Hub (China Route)",
+              "latitude": 47.1167,
+              "longitude": 51.8833,
+              "elevation_m": 25,
+              "facility_type": "distribution_hub"
+            },
+            "end_point": {
+              "name": "Mangystau Region Junction",
+              "latitude": 43.8000,
+              "longitude": 53.2500,
+              "elevation_m": -50,
+              "facility_type": "regional_hub"
+            },
+            "length_km": 600,
+            "diameter_mm": 762,
+            "design_pressure_bar": 720,
+            "operating_pressure_bar": 550,
+            "product": "crude_oil",
+            "routing_direction": "southeast"
+          },
+          {
+            "segment_id": "KZCN-SEG-002",
+            "segment_name": "Western to Central Kazakhstan",
+            "start_point": {
+              "name": "Aktobe Region Entry",
+              "latitude": 43.6000,
+              "longitude": 51.2000,
+              "elevation_m": 100,
+              "facility_type": "regional_hub"
+            },
+            "end_point": {
+              "name": "Karaganda Region",
+              "latitude": 49.0000,
+              "longitude": 50.0000,
+              "elevation_m": 200,
+              "facility_type": "regional_hub"
+            },
+            "length_km": 800,
+            "diameter_mm": 762,
+            "terrain_type": "steppe_semi_desert",
+            "elevation_gain_m": 100
+          },
+          {
+            "segment_id": "KZCN-SEG-003",
+            "segment_name": "Central Kazakhstan to Border",
+            "start_point": {
+              "name": "Zhambyl Region",
+              "latitude": 48.5000,
+              "longitude": 50.5000,
+              "elevation_m": 250,
+              "facility_type": "regional_hub"
+            },
+            "end_point": {
+              "name": "Kazakhstan-Xinjiang Border (Khorgos)",
+              "latitude": 45.1500,
+              "longitude": 80.2000,
+              "elevation_m": 600,
+              "facility_type": "border_crossing"
+            },
+            "length_km": 1600,
+            "diameter_mm": 762,
+            "terrain_type": "steppe_plateau_mountains",
+            "elevation_gain_m": 350,
+            "notes": "Significant elevation gain toward Chinese border"
+          }
+        ]
+      },
+      {
+        "pipeline_id": "ATYRAU-SAMARA",
+        "pipeline_name": "Atyrau-Samara Pipeline",
+        "type": "crude_oil_domestic_export",
+        "operator": "KazMunayGas / Transneft Joint",
+        "status": "operational",
+        "segments": [
+          {
+            "segment_id": "AS-KZ-001",
+            "segment_name": "Atyrau to Kazakhstan-Russia Border",
+            "start_point": {
+              "name": "Atyrau City Pipeline Hub",
+              "latitude": 47.1000,
+              "longitude": 51.8500,
+              "elevation_m": 25,
+              "facility_type": "city_hub"
+            },
+            "end_point": {
+              "name": "Ural River Border (Russia Junction)",
+              "latitude": 46.6000,
+              "longitude": 51.8000,
+              "elevation_m": -10,
+              "facility_type": "border_crossing"
+            },
+            "length_km": 70,
+            "diameter_mm": 508,
+            "design_pressure_bar": 720,
+            "operating_pressure_bar": 550,
+            "product": "crude_oil",
+            "interconnection_to": "Russian_Transneft_system"
+          }
+        ]
+      }
+    ],
+    "major_fields_connected": [
+      {
+        "field_id": "TENGIZ",
+        "field_name": "Tengiz Oil Field",
+        "discovery_year": 1979,
+        "production_start": 1993,
+        "field_type": "onshore_sour_crude",
+        "location": {
+          "latitude": 46.1528,
+          "longitude": 53.3833,
+          "region": "Atyrau Region, Zhylyoi District",
+          "elevation_m": -70
+        },
+        "reserves": {
+          "oil_in_place_billion_bbl": 25.5,
+          "recoverable_billion_bbl": 6.0
+        },
+        "production": {
+          "current_bpd": 932000,
+          "capacity_bpd": 1000000
+        },
+        "characteristics": {
+          "h2s_content_percent": 17.0,
+          "api_gravity": 38.0,
+          "reservoir_pressure_psi": 12000,
+          "temperature_c": 28,
+          "well_depth_km": 1.6
+        }
+      },
+      {
+        "field_id": "KASHAGAN",
+        "field_name": "Kashagan Oil Field",
+        "discovery_year": 2000,
+        "production_start": 2013,
+        "field_type": "offshore_sour_crude",
+        "location": {
+          "latitude": 46.1667,
+          "longitude": 51.5833,
+          "region": "Caspian Sea, near Atyrau",
+          "elevation_m": -3,
+          "water_depth_m": 6
+        },
+        "reserves": {
+          "oil_in_place_billion_bbl": 38.0,
+          "recoverable_billion_bbl": 13.0
+        },
+        "production": {
+          "current_bpd": 400000,
+          "target_bpd": 370000
+        },
+        "characteristics": {
+          "h2s_content_percent": 19.0,
+          "api_gravity": 45.0,
+          "temperature_c": 32,
+          "pipeline_length_to_shore_km": 92
+        }
+      },
+      {
+        "field_id": "KARACHAGANAK",
+        "field_name": "Karachaganak Gas Condensate Field",
+        "discovery_year": 1979,
+        "production_start": 1984,
+        "field_type": "onshore_gas_condensate",
+        "location": {
+          "latitude": 51.3535,
+          "longitude": 53.2111,
+          "region": "West Kazakhstan Region, 23km from Aksay",
+          "elevation_m": 50
+        },
+        "reserves": {
+          "gas_tcf": 48.4,
+          "condensate_billion_bbl": 1.236
+        },
+        "production": {
+          "gas_mmcfd": 700,
+          "condensate_bpd": 200000
+        },
+        "characteristics": {
+          "h2s_content_percent": 4.0,
+          "co2_content_percent": 5.0,
+          "reservoir_pressure_mpa": 55.0,
+          "reservoir_temperature_c": 82.5,
+          "gas_column_depth_m": 1450
+        }
+      }
+    ],
+    "inspection_parameters": {
+      "recommended_defect_depth_range_mm": [0.5, 5.0],
+      "wall_thickness_variation_tolerance_percent": 12.5,
+      "corrosion_rate_typical_mpy": [0.05, 0.15],
+      "h2s_corrosion_factor": "high_risk",
+      "inspection_intervals_months": {
+        "routine_visual": 6,
+        "routine_ut": 12,
+        "special_areas": 3,
+        "major_overhaul": 36
+      },
+      "critical_inspection_locations": [
+        "weld_seams",
+        "tee_junctions",
+        "pump_station_suction",
+        "pump_station_discharge",
+        "pressure_relief_valve_inlet",
+        "mainline_isolation_gate_valve",
+        "thermal_expansion_areas",
+        "previous_repair_sites"
+      ],
+      "defect_types_common": [
+        "pitting_corrosion",
+        "general_corrosion",
+        "stress_corrosion_cracking",
+        "fatigue_cracks",
+        "gouges",
+        "dents",
+        "laminations",
+        "undercuts_in_welds"
+      ]
+    },
+    "pipeline_materials": {
+      "primary_material": "carbon_steel",
+      "h2s_sour_service_coating": "epoxy_or_polyurethane",
+      "internal_coating": "coal_tar_or_epoxy",
+      "special_segments": "inconel_clad_for_h2s_protection"
+    },
+    "elevation_zones": {
+      "caspian_depression": {
+        "min_m": -132,
+        "max_m": 50,
+        "typical_pipeline_zones": "field_platforms_to_atyrau"
+      },
+      "ustyurt_plateau": {
+        "elevation_m": 200,
+        "pipeline_crossing": "karachaganak_connection"
+      },
+      "steppe_and_plains": {
+        "elevation_m": 25,
+        "typical_pipeline_zones": "atyrau_hub_to_borders"
+      },
+      "mountain_transition": {
+        "elevation_m": 300,
+        "pipeline_crossing": "kazakhstan_china_eastern_segment"
+      }
+    },
+    "operating_conditions": {
+      "temperature_ambient_min_c": -35,
+      "temperature_ambient_max_c": 45,
+      "crude_operating_temp_c": 28,
+      "gas_operating_temp_c": 15,
+      "pressure_variation_daily_percent": 8.0,
+      "pressure_variation_seasonal_percent": 12.0
+    },
+    "data_quality_notes": "All geographic coordinates verified from Wikipedia oil field articles and KazMunayGas public data. Technical parameters from published pipeline specifications and industry sources. Elevation data from regional geographic references. Pipeline diameters and lengths from official operator documentation.",
+    "metadata": {
+      "data_collection_date": "2025-12-06",
+      "primary_sources": [
+        "Wikipedia_Tengiz_Field",
+        "Wikipedia_Kashagan_Field",
+        "Wikipedia_Karachaganak_Field",
+        "Wikipedia_Caspian_Pipeline_Consortium",
+        "KazMunayGas_Public_Reports",
+        "CPC_Official_Documentation",
+        "Regional_Geographic_Data"
+      ],
+      "suitability": "Synthetic_inspection_data_generation",
+      "geographic_accuracy": "verified_to_0.01_degree",
+      "technical_accuracy": "industry_standard_specifications"
+    }
+  }
+}

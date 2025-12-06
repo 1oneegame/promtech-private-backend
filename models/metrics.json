@@ -1,0 +1,202 @@
+{
+  "models_comparison": {
+    "RandomForest": {
+      "accuracy": 0.9705882352941176,
+      "f1_weighted": 0.9705882352941176,
+      "f1_macro": 0.6515151515151515,
+      "classification_report": {
+        "normal": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1-score": 1.0,
+          "support": 45.0
+        },
+        "medium": {
+          "precision": 0.9545454545454546,
+          "recall": 0.9545454545454546,
+          "f1-score": 0.9545454545454546,
+          "support": 22.0
+        },
+        "high": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1-score": 0.0,
+          "support": 1.0
+        },
+        "accuracy": 0.9705882352941176,
+        "macro avg": {
+          "precision": 0.6515151515151515,
+          "recall": 0.6515151515151515,
+          "f1-score": 0.6515151515151515,
+          "support": 68.0
+        },
+        "weighted avg": {
+          "precision": 0.9705882352941176,
+          "recall": 0.9705882352941176,
+          "f1-score": 0.9705882352941176,
+          "support": 68.0
+        }
+      },
+      "confusion_matrix": [
+        [
+          45,
+          0,
+          0
+        ],
+        [
+          0,
+          21,
+          1
+        ],
+        [
+          0,
+          1,
+          0
+        ]
+      ]
+    },
+    "XGBoost": {
+      "accuracy": 0.9705882352941176,
+      "f1_weighted": 0.963316095669037,
+      "f1_macro": 0.6478521478521478,
+      "classification_report": {
+        "normal": {
+          "precision": 0.9782608695652174,
+          "recall": 1.0,
+          "f1-score": 0.989010989010989,
+          "support": 45.0
+        },
+        "medium": {
+          "precision": 0.9545454545454546,
+          "recall": 0.9545454545454546,
+          "f1-score": 0.9545454545454546,
+          "support": 22.0
+        },
+        "high": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1-score": 0.0,
+          "support": 1.0
+        },
+        "accuracy": 0.9705882352941176,
+        "macro avg": {
+          "precision": 0.6442687747035573,
+          "recall": 0.6515151515151515,
+          "f1-score": 0.6478521478521478,
+          "support": 68.0
+        },
+        "weighted avg": {
+          "precision": 0.9562020460358056,
+          "recall": 0.9705882352941176,
+          "f1-score": 0.963316095669037,
+          "support": 68.0
+        }
+      },
+      "confusion_matrix": [
+        [
+          45,
+          0,
+          0
+        ],
+        [
+          1,
+          21,
+          0
+        ],
+        [
+          0,
+          1,
+          0
+        ]
+      ]
+    },
+    "LogisticRegression": {
+      "accuracy": 0.9705882352941176,
+      "f1_weighted": 0.9702076482767019,
+      "f1_macro": 0.97688060731539,
+      "classification_report": {
+        "normal": {
+          "precision": 0.9574468085106383,
+          "recall": 1.0,
+          "f1-score": 0.9782608695652174,
+          "support": 45.0
+        },
+        "medium": {
+          "precision": 1.0,
+          "recall": 0.9090909090909091,
+          "f1-score": 0.9523809523809523,
+          "support": 22.0
+        },
+        "high": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1-score": 1.0,
+          "support": 1.0
+        },
+        "accuracy": 0.9705882352941176,
+        "macro avg": {
+          "precision": 0.9858156028368795,
+          "recall": 0.9696969696969697,
+          "f1-score": 0.97688060731539,
+          "support": 68.0
+        },
+        "weighted avg": {
+          "precision": 0.971839799749687,
+          "recall": 0.9705882352941176,
+          "f1-score": 0.9702076482767019,
+          "support": 68.0
+        }
+      },
+      "confusion_matrix": [
+        [
+          45,
+          0,
+          0
+        ],
+        [
+          2,
+          20,
+          0
+        ],
+        [
+          0,
+          0,
+          1
+        ]
+      ]
+    }
+  },
+  "feature_importance": {
+    "top_10_features": [
+      "erf_b31g",
+      "depth_percent",
+      "depth_mm",
+      "distance_to_weld_m",
+      "width_mm",
+      "defect_type_defect_type_питтинг-коррозия",
+      "wall_thickness_mm",
+      "altitude_m",
+      "length_mm",
+      "defect_type_defect_type_вмятина"
+    ],
+    "importances": [
+      0.3400144941242142,
+      0.24002343624072983,
+      0.14061637727048204,
+      0.11224032506971031,
+      0.03573697534641255,
+      0.03238612230691336,
+      0.01817026717103134,
+      0.01623049236196713,
+      0.011354852895660971,
+      0.011299360188697209
+    ]
+  },
+  "metadata": {
+    "best_model": "RandomForest",
+    "best_f1_score": 0.9705882352941176,
+    "training_date": "2025-12-06T22:26:23.342898",
+    "calibration_method": "isotonic",
+    "cv_folds": 5
+  }
+}
