@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 # Импортируем и запускаем приложение
 if __name__ == "__main__":
     import uvicorn
-    from src.app import app
+    from app import app
     
     uvicorn.run(
         app,

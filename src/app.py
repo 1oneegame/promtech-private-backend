@@ -1,22 +1,20 @@
 """
 IntegrityOS FastAPI Backend
-REST API для анализа дефектов трубопроводов
+Упрощенная главная точка входа с подключением модулей
 """
 
 import logging
-from typing import Dict, Union
-from fastapi import FastAPI, Query, HTTPException
-from fastapi.responses import FileResponse
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-import tempfile
-import json
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Optional, Union
 
-from parser import CSVParser
-from database import MongoDBConnection, DefectsRepository
-from models import Defect, DefectResponse, DefectDetailsResponse, DefectListResponse, StatisticsResponse, DefectType
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from core import MongoDBConnection, DefectsRepository, AdminUsersRepository, AdminUser, SeverityLevel, AdminDefectCreateRequest
+from parsers import CSVParser
+from api import health, auth_routes, defects, analytics, export, admin, ml_routes
+from api.ml_routes import MLPredictionRequest, MLPredictionRequestNested
+from auth import set_admin_repository, get_password_hash
 
 # Настройка логирования
 logging.basicConfig(
@@ -27,52 +25,56 @@ logger = logging.getLogger(__name__)
 
 # ML модуль
 try:
-    from ml.inference import get_classifier, DefectClassifier
+    from ml.inference import get_classifier, defect_to_ml_input
     from ml.config import METRICS_PATH
     ML_AVAILABLE = True
     logger.info("ML модуль импортирован успешно")
 except ImportError as e:
     ML_AVAILABLE = False
+    METRICS_PATH = None
+    defect_to_ml_input = None
     logger.warning(f"ML модуль недоступен: {e}")
-    get_classifier = None
-
-
-def defect_to_response(defect: Defect) -> DefectResponse:
-    """Преобразует Defect в DefectResponse с структурированными деталями"""
-    details = DefectDetailsResponse(
-        type=defect.defect_type,
-        parameters=defect.parameters,
-        location=defect.location,
-        surface_location=defect.surface_location,
-        distance_to_weld_m=defect.distance_to_weld_m,
-        erf_b31g_code=defect.erf_b31g_code
-    )
-    return DefectResponse(
-        defect_id=defect.defect_id,
-        segment_number=defect.segment_number,
-        measurement_distance_m=defect.measurement_distance_m,
-        pipeline_id=defect.pipeline_id,
-        details=details
-    )
 
 # Глобальные переменные
 db_connection: Optional[MongoDBConnection] = None
 defects_repository: Optional[DefectsRepository] = None
-ml_classifier: Optional['DefectClassifier'] = None
-
+admin_repository: Optional[AdminUsersRepository] = None
+ml_classifier = None  # Тип зависит от ml модуля
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Управление жизненным циклом приложения"""
-    global db_connection, defects_repository, pipelines_repository, ml_classifier
+    global db_connection, defects_repository, admin_repository, ml_classifier
     
     # Startup
     logger.info("[STARTUP] Initializing IntegrityOS API...")
     
     db_connection = MongoDBConnection(local_mode=False)
     defects_repository = DefectsRepository(db_connection)
+    admin_repository = AdminUsersRepository(db_connection)
+    
+    # Установить глобальный репозиторий админов для auth модуля
+    set_admin_repository(admin_repository)
+    
+    # Создать дефолтного админа если его нет
+    default_admin = admin_repository.get_user_by_username("admin")
+    if not default_admin:
+        from datetime import datetime
+        default_admin_user = AdminUser(
+            username="admin",
+            password_hash=get_password_hash("admin"),
+            role="admin",
+            created_at=datetime.utcnow(),
+            is_active=True
+        )
+        result = admin_repository.create_admin(default_admin_user)
+        if result["success"]:
+            logger.info("[STARTUP] Created default admin user (username: admin, password: admin)")
+        else:
+            logger.warning(f"[STARTUP] Failed to create default admin: {result.get('error')}")
+    else:
+        logger.info("[STARTUP] Admin users loaded from database")
 
-    # Проверяем, есть ли уже дефекты в БД
     existing_defects = defects_repository.get_all_defects()
     if not existing_defects:
         logger.info("[STARTUP] No defects found in DB. Parsing CSV files...")
@@ -83,12 +85,37 @@ async def lifespan(app: FastAPI):
             parser.save_errors_log(errors)
             logger.warning(f"[STARTUP] Found {len(errors)} parsing errors")
 
-        # Вставляем дефекты в БД
         if defects:
+            # Сначала загружаем ML модель
+            if ML_AVAILABLE:
+                try:
+                    ml_classifier = get_classifier()
+                    if ml_classifier and ml_classifier.is_loaded:
+                        logger.info("[STARTUP] ML модель загружена, начинаем предсказание severity для дефектов...")
+                        
+                        # Предсказываем severity для каждого дефекта
+                        predicted_count = 0
+                        for defect in defects:
+                            try:
+                                ml_input = defect_to_ml_input(defect)
+                                prediction = ml_classifier.predict(ml_input)
+                                
+                                # Сохраняем предсказание в объект дефекта
+                                defect.severity = SeverityLevel(prediction["severity"])
+                                defect.probability = prediction["probability"]
+                                predicted_count += 1
+                            except Exception as e:
+                                logger.warning(f"[STARTUP] Не удалось предсказать severity для дефекта {defect.defect_id}: {e}")
+                        
+                        logger.info(f"[STARTUP] Предсказан severity для {predicted_count}/{len(defects)} дефектов")
+                    else:
+                        logger.warning("[STARTUP] ML модель не загружена, дефекты будут сохранены без severity")
+                except Exception as e:
+                    logger.error(f"[STARTUP] Ошибка загрузки ML модели: {e}")
+                    logger.warning("[STARTUP] Дефекты будут сохранены без severity")
+            
             result = defects_repository.insert_defects(defects)
             logger.info(f"[STARTUP] Added {result['inserted']} defects to database")
-
-            # Экспортируем в JSON
             defects_repository.export_to_json('defects_output.json')
             parser.export_to_json(defects, 'defects_parsed.json')
         logger.info("[STARTUP] Initialization complete (data loaded from CSV)")
@@ -96,14 +123,14 @@ async def lifespan(app: FastAPI):
         logger.info(f"[STARTUP] {len(existing_defects)} defects already present in DB. Skipping CSV import.")
         logger.info("[STARTUP] Initialization complete (data loaded from DB)")
     
-    # Загрузка ML модели
-    if ML_AVAILABLE:
+    # Загрузка ML модели (если еще не загружена)
+    if ML_AVAILABLE and ml_classifier is None:
         try:
             ml_classifier = get_classifier()
             if ml_classifier and ml_classifier.is_loaded:
                 logger.info("[STARTUP] ML модель загружена и готова")
             else:
-                logger.warning("[STARTUP] ML модель не загружена (возможно, требуется обучение)")
+                logger.warning("[STARTUP] ML модель не загружена")
         except Exception as e:
             logger.error(f"[STARTUP] Ошибка загрузки ML модели: {e}")
             ml_classifier = None
@@ -118,44 +145,14 @@ async def lifespan(app: FastAPI):
     logger.info("[SHUTDOWN] Application terminated")
 
 
-# Инициализация FastAPI приложения с lifespan
+# Инициализация FastAPI приложения
 app = FastAPI(
     title="IntegrityOS API",
     version="1.0.0",
-    lifespan=lifespan,
-    tags_metadata=[
-        {
-            "name": "Health",
-            "description": "Проверка статуса API",
-        },
-        {
-            "name": "Defects",
-            "description": "Работа с дефектами - получение, поиск, фильтрация",
-        },
-        {
-            "name": "Analytics",
-            "description": "Статистика и аналитика по дефектам",
-        },
-        {
-            "name": "Export",
-            "description": "Экспорт данных в различные форматы",
-        },
-        {
-            "name": "ML",
-            "description": "Машинное обучение - предсказание критичности дефектов",
-        },
-        {
-            "name": "Admin",
-            "description": "Административные операции - перезагрузка и очистка данных",
-        },
-        {
-            "name": "Info",
-            "description": "Информация о системе",
-        },
-    ]
+    lifespan=lifespan
 )
 
-# Добавляем CORS middleware
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -165,453 +162,331 @@ app.add_middleware(
 )
 
 
-# ==================== ENDPOINTS ====================
-
-@app.get("/", tags=["Health"])
-async def root():
-    """Корневой эндпоинт - проверка статуса API"""
+# Dependency injection для роутов
+def get_dependencies():
+    """Динамически получить зависимости"""
     return {
-        "service": "IntegrityOS API",
-        "version": "1.0.0",
-        "status": "active",
-        "docs": "/docs"
+        'db_connection': db_connection,
+        'defects_repository': defects_repository,
+        'ml_classifier': ml_classifier,
+        'ml_available': ML_AVAILABLE,
+        'metrics_path': METRICS_PATH,
+        'defect_to_ml_input': defect_to_ml_input
     }
 
 
-@app.get("/health", tags=["Health"])
-async def health_check():
-    """Проверка здоровья API"""
-    try:
-        defects = defects_repository.get_all_defects()
-        return {
-            "status": "healthy",
-            "database": "connected" if db_connection else "disconnected",
-            "defects_count": len(defects)
-        }
-    except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
-        raise HTTPException(status_code=500, detail="Health check failed")
-
-
-@app.get("/defects", response_model=DefectListResponse, tags=["Defects"])
-async def get_defects(
-    defect_type: Optional[str] = Query(None, description="Тип дефекта"),
-    segment: Optional[int] = Query(None, description="Номер сегмента"),
-):
-    """
-    Получить дефекты с опциональной фильтрацией
+# Подключение роутов с dependency injection
+def setup_routes():
+    """Настройка всех роутов с зависимостями"""
     
+    # Health & Info
+    @app.get("/", tags=["Health"],
+             summary="Корневой endpoint",
+             description="""Приветственная страница API.
+             
+    **Пример ответа:**
+    ```json
+    {
+      "message": "IntegrityOS API is running",
+      "version": "1.0.0",
+      "docs": "/docs"
+    }
+    ```
+    """)
+    async def root():
+        return await health.root()
+    
+    @app.get("/health", tags=["Health"],
+             summary="Проверка здоровья системы",
+             description="""Возвращает статус работы всех компонентов системы.
+             
+    **Пример ответа:**
+    ```json
+    {
+      "status": "healthy",
+      "database": "connected",
+      "defects_count": 1234,
+      "timestamp": "2025-12-07T10:30:00"
+    }
+    ```
+    """)
+    async def health_check():
+        deps = get_dependencies()
+        return await health.health_check(deps['db_connection'], deps['defects_repository'])
+    
+    @app.get("/info", tags=["Info"],
+             summary="Информация о системе",
+             description="""Детальная информация о конфигурации и возможностях системы.
+             
+    **Пример ответа:**
+    ```json
+    {
+      "version": "1.0.0",
+      "database": "MongoDB",
+      "ml_available": true,
+      "total_defects": 1234,
+      "defect_types": ["коррозия", "трещина", "вмятина"]
+    }
+    ```
+    """)
+    async def get_info():
+        deps = get_dependencies()
+        return await health.get_info(deps['db_connection'], deps['defects_repository'], deps['ml_available'])
+    
+    # Auth
+    from api.auth_routes import router as auth_router
+    app.include_router(auth_router)
+    
+    # Defects
+    @app.get("/defects", tags=["Defects"],
+             summary="Получить список дефектов",
+             description="""Возвращает список всех дефектов с возможностью фильтрации.
+             
+    **Параметры запроса:**
+    - `defect_type` (optional): Фильтр по типу дефекта (коррозия, трещина, вмятина и т.д.)
+    - `segment` (optional): Фильтр по номеру сегмента трубопровода
+    
+    **Примеры запросов:**
+    - `GET /defects` - все дефекты
+    - `GET /defects?defect_type=коррозия` - только коррозия
+    - `GET /defects?segment=3` - дефекты сегмента 3
+    
+    **Пример ответа:**
+    ```json
+    [
+      {
+        "defect_id": "65716dae-81e2-402d-8610-b583fe56dd1a",
+        "segment_number": 3,
+        "measurement_distance_m": 5.803,
+        "pipeline_id": "MT-03",
+        "severity": "medium",
+        "details": {
+          "type": "коррозия",
+          "parameters": {
+            "depth_percent": 11.0,
+            "length_mm": 15.0,
+            "width_mm": 15.0
+          }
+        }
+      }
+    ]
+    ```
+    """)
+    async def get_defects_endpoint(defect_type=None, segment=None):
+        deps = get_dependencies()
+        return await defects.get_defects(defect_type, segment, deps['defects_repository'])
+    
+    @app.get("/defects/search", tags=["Defects"],
+             summary="Поиск дефектов",
+             description="""Расширенный поиск дефектов с фильтрацией.
+             
     **Параметры:**
-    - `defect_type`: коррозия, сварной шов, металлический объект
-    - `segment`: номер сегмента трубопровода
-    """
-    try:
-        # Получаем все дефекты или отфильтрованные
-        if defect_type:
-            defects = defects_repository.get_defects_by_type(defect_type)
-        elif segment:
-            defects = defects_repository.get_defects_by_segment(segment)
-        else:
-            defects = defects_repository.get_all_defects()
-        
-        # Применяем комбинированные фильтры
-        if defect_type and segment:
-            defects = [d for d in defects if d.segment_number == segment]
-        
-        total = len(defects)
-        
-        # Конвертируем Defect в DefectResponse
-        response_defects = [defect_to_response(d) for d in defects]
-        
-        return DefectListResponse(
-            total=total,
-            defects=response_defects,
-            filters_applied={
-                "defect_type": defect_type,
-                "segment": segment
-            }
-        )
+    - `defect_type`: Тип дефекта
+    - `segment`: Номер сегмента
     
-    except Exception as e:
-        logger.error(f"Error getting defects: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/defects/search", response_model=DefectListResponse, tags=["Defects"])
-async def search_defects(
-    defect_type: Optional[str] = None,
-    segment: Optional[int] = None
-):
-    """Получить дефекты с применением множественных фильтров
+    **Пример:** `GET /defects/search?defect_type=коррозия&segment=3`
+    """)
+    async def search_defects_endpoint(defect_type=None, segment=None):
+        deps = get_dependencies()
+        return await defects.search_defects(defect_type, segment, deps['defects_repository'])
     
-    Примеры:
-    - /defects/search?defect_type=коррозия
-    - /defects/search?segment=3
-    - /defects/search?defect_type=коррозия&segment=3
-    """
-    try:
-        all_defects = defects_repository.get_all_defects()
-        filtered_defects = all_defects
-        
-        # Применяем фильтры
-        if defect_type:
-            filtered_defects = [d for d in filtered_defects if d.defect_type.value == defect_type]
-        
-        if segment is not None:
-            filtered_defects = [d for d in filtered_defects if d.segment_number == segment]
-        
-        response_defects = [defect_to_response(d) for d in filtered_defects]
-        return DefectListResponse(
-            total=len(filtered_defects),
-            defects=response_defects,
-            filters_applied={
-                "defect_type": defect_type,
-                "segment": segment
-            }
-        )
-    except Exception as e:
-        logger.error(f"Error searching defects: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/defects/{defect_id}", response_model=DefectResponse, tags=["Defects"])
-async def get_defect(defect_id: str):
-    """Получить дефект по ID"""
-    try:
-        defects = defects_repository.get_all_defects()
-        # Простой поиск по индексу (для локального режима)
-        for defect in defects:
-            if str(defect.defect_id or "") == defect_id:
-                return defect_to_response(defect)
-        raise HTTPException(status_code=404, detail="Defect not found")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting defect: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/defects/type/{defect_type}", response_model=DefectListResponse, tags=["Defects"])
-async def get_defects_by_type(defect_type: str):
-    """Получить дефекты по типу"""
-    try:
-        valid_types = [t.value for t in DefectType]
-        if defect_type not in valid_types:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid defect type. Allowed: {', '.join(valid_types)}"
-            )
-        
-        defects = defects_repository.get_defects_by_type(defect_type)
-        response_defects = [defect_to_response(d) for d in defects]
-        return DefectListResponse(
-            total=len(defects),
-            defects=response_defects,
-            filters_applied={"defect_type": defect_type}
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting defects by type: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/defects/segment/{segment_id}", response_model=DefectListResponse, tags=["Defects"])
-async def get_defects_by_segment(segment_id: int):
-    """Получить дефекты по номеру сегмента"""
-    try:
-        defects = defects_repository.get_defects_by_segment(segment_id)
-        response_defects = [defect_to_response(d) for d in defects]
-        return DefectListResponse(
-            total=len(defects),
-            defects=response_defects,
-            filters_applied={"segment": segment_id}
-        )
-    except Exception as e:
-        logger.error(f"Error getting defects by segment: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/statistics", response_model=StatisticsResponse, tags=["Analytics"])
-async def get_statistics():
-    """Получить статистику по дефектам"""
-    try:
-        stats = defects_repository.get_statistics()
-        return StatisticsResponse(**stats)
-    except Exception as e:
-        logger.error(f"Error getting statistics: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/export/json", tags=["Export"])
-async def export_to_json():
-    """Экспортировать дефекты в JSON файл для скачивания"""
-    try:
-        defects = defects_repository.get_all_defects()
-        if not defects:
-            raise HTTPException(status_code=404, detail="No defects found")
-        
-        # Конвертируем в DefectResponse формат (как в других эндпоинтах)
-        response_defects = [defect_to_response(d) for d in defects]
-        defects_dict = [defect.model_dump() for defect in response_defects]
-        
-        # Создаём временный файл
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_file:
-            json.dump(defects_dict, temp_file, ensure_ascii=False, indent=2)
-            temp_filename = temp_file.name
-        
-        # Возвращаем файл для скачивания
-        return FileResponse(
-            path=temp_filename,
-            filename="defects_export.json",
-            media_type='application/json',
-            background=None  # Файл будет удалён автоматически после отправки
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error exporting to JSON: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/info", tags=["Info"])
-async def get_info():
-    """Получить информацию о системе и доступных сервисах"""
-    try:
-        defects = defects_repository.get_all_defects()
-        stats = defects_repository.get_statistics()
-        
-        return {
-            "application": "IntegrityOS",
-            "version": "1.0.0",
-            "database_mode": "local" if db_connection.local_mode else "mongodb",
-            "total_defects": len(defects),
-            "ml_available": ML_AVAILABLE,
-            "statistics": stats,
-            "available_endpoints": {
-                "defects": "/defects",
-                "statistics": "/statistics",
-                "export": "/export/json",
-                "ml_predict": "/ml/predict",
-                "ml_metrics": "/ml/model/metrics",
-                "ml_info": "/ml/model/info",
-                "docs": "/docs"
-            }
-        }
-    except Exception as e:
-        logger.error(f"Error getting info: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ==================== BATCH OPERATIONS ====================
-
-@app.post("/reload", tags=["Admin"])
-async def reload_data():
-    """Перезагрузить данные из CSV"""
-    try:
-        # Очищаем БД
-        defects_repository.clear_all()
-        
-        # Парсим CSV заново
-        parser = CSVParser(data_dir='data')
-        defects, errors = parser.parse_all_csv_files()
-        
-        # Вставляем в БД
-        result = defects_repository.insert_defects(defects)
-        
-        return {
-            "status": "success",
-            "message": "Data reloaded",
-            "inserted": result["inserted"],
-            "errors": len(errors),
-            "error_log": "parse_errors.log" if errors else None
-        }
-    except Exception as e:
-        logger.error(f"Error reloading data: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.delete("/clear", tags=["Admin"])
-async def clear_data():
-    """Очистить все дефекты из БД"""
-    try:
-        success = defects_repository.clear_all()
-        if success:
-            return {"status": "success", "message": "All defects cleared"}
-        else:
-            raise HTTPException(status_code=500, detail="Clear failed")
-    except Exception as e:
-        logger.error(f"Error clearing data: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ==================== ML ENDPOINTS ====================
-
-# Модели для вложенной структуры (новый формат)
-class DefectParameters(BaseModel):
-    """
-    Параметры дефекта.
+    @app.get("/defects/{defect_id}", tags=["Defects"],
+             summary="Получить дефект по ID",
+             description="""Возвращает полную информацию о конкретном дефекте.
+             
+    **Пример запроса:**
+    ```
+    GET /defects/65716dae-81e2-402d-8610-b583fe56dd1a
+    ```
     
-    ВАЖНО: Все геометрические параметры теперь ИСПОЛЬЗУЮТСЯ в ML модели!
-    
-    Опциональные параметры (length_mm, width_mm, depth_mm, wall_thickness_mm)
-    могут быть null - в этом случае модель заполнит их медианой из обучающей выборки.
-    """
-    length_mm: Optional[float] = Field(None, description="✓ ИСПОЛЬЗУЕТСЯ - Длина дефекта (мм). Может быть null → заполнится медианой")
-    width_mm: Optional[float] = Field(None, description="✓ ИСПОЛЬЗУЕТСЯ - Ширина дефекта (мм). Может быть null → заполнится медианой")
-    depth_mm: Optional[float] = Field(None, description="✓ ИСПОЛЬЗУЕТСЯ - Глубина дефекта в абсолютных единицах (мм). Может быть null → заполнится медианой")
-    depth_percent: float = Field(..., description="✓ ИСПОЛЬЗУЕТСЯ - Глубина дефекта в % от толщины стенки (ОБЯЗАТЕЛЬНО)", ge=0, le=100)
-    wall_thickness_mm: Optional[float] = Field(None, description="✓ ИСПОЛЬЗУЕТСЯ - Толщина стенки трубопровода (мм). Может быть null → заполнится медианой")
-
-
-class DefectLocation(BaseModel):
-    """Местоположение дефекта"""
-    latitude: float = Field(..., description="Широта", ge=-90, le=90)
-    longitude: float = Field(..., description="Долгота", ge=-180, le=180)
-    altitude: float = Field(..., description="Высота над уровнем моря (м)")
-
-
-class DefectDetails(BaseModel):
-    """Детальная информация о дефекте"""
-    type: str = Field(..., description="Тип дефекта")
-    parameters: DefectParameters = Field(..., description="Параметры дефекта")
-    location: DefectLocation = Field(..., description="Местоположение")
-    surface_location: str = Field(..., description="Расположение на поверхности (ВНШ/ВНТ)")
-    distance_to_weld_m: Optional[float] = Field(None, description="✓ ИСПОЛЬЗУЕТСЯ - Расстояние до сварного шва (м). Может быть null → заполнится медианой")
-    erf_b31g_code: float = Field(..., description="Коэффициент ERF B31G", ge=0, le=1)
-
-
-class MLPredictionRequestNested(BaseModel):
-    """
-    Запрос для предсказания критичности дефекта (вложенная структура).
-    
-    Поддерживает полный набор параметров дефекта в иерархической структуре.
-    Все геометрические параметры (length_mm, width_mm, depth_mm, wall_thickness_mm, 
-    distance_to_weld_m) теперь используются в модели.
-    """
-    defect_id: Optional[str] = Field(None, description="⚠️ НЕ ИСПОЛЬЗУЕТСЯ - ID дефекта (для идентификации)")
-    segment_number: Optional[int] = Field(None, description="⚠️ НЕ ИСПОЛЬЗУЕТСЯ - Номер сегмента трубопровода")
-    measurement_distance_m: float = Field(..., description="✓ ИСПОЛЬЗУЕТСЯ - Расстояние вдоль трубопровода (м)", ge=0)
-    pipeline_id: Optional[str] = Field(None, description="⚠️ НЕ ИСПОЛЬЗУЕТСЯ - ID трубопровода (для идентификации)")
-    details: DefectDetails = Field(..., description="Детали дефекта")
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "measurement_distance_m": 6.201,
-                "pipeline_id": "MT-03",
-                "details": {
-                    "type": "коррозия",
-                    "parameters": {
-                        "length_mm": 27.0,
-                        "width_mm": 19.0,
-                        "depth_mm": None,
-                        "depth_percent": 9.0,
-                        "wall_thickness_mm": 7.9
-                    },
-                    "location": {
-                        "latitude": 48.480297,
-                        "longitude": 57.666958,
-                        "altitude": 265.2
-                    },
-                    "surface_location": "ВНШ",
-                    "distance_to_weld_m": -1.869,
-                    "erf_b31g_code": 0.52
-                }
-            }
-        }
-
-
-# Модели для плоской структуры (старый формат - обратная совместимость)
-class MLPredictionRequest(BaseModel):
-    """
-    Запрос для предсказания критичности дефекта (плоская структура).
-    
-    Упрощенный формат для обратной совместимости. Содержит все параметры,
-    которые используются в модели в плоской структуре без вложенности.
-    """
-    defect_id: Optional[str] = Field(None, description="⚠️ НЕ ИСПОЛЬЗУЕТСЯ - ID дефекта (для идентификации)")
-    segment_number: Optional[int] = Field(None, description="⚠️ НЕ ИСПОЛЬЗУЕТСЯ - Номер сегмента")
-    depth_percent: float = Field(..., description="✓ ИСПОЛЬЗУЕТСЯ - Глубина дефекта в процентах (ОБЯЗАТЕЛЬНО)", ge=0, le=100)
-    depth_mm: Optional[float] = Field(None, description="✓ ИСПОЛЬЗУЕТСЯ - Глубина дефекта (мм). null → медиана")
-    length_mm: Optional[float] = Field(None, description="✓ ИСПОЛЬЗУЕТСЯ - Длина дефекта (мм). null → медиана")
-    width_mm: Optional[float] = Field(None, description="✓ ИСПОЛЬЗУЕТСЯ - Ширина дефекта (мм). null → медиана")
-    wall_thickness_mm: Optional[float] = Field(None, description="✓ ИСПОЛЬЗУЕТСЯ - Толщина стенки (мм). null → медиана")
-    distance_to_weld_m: Optional[float] = Field(None, description="✓ ИСПОЛЬЗУЕТСЯ - Расстояние до сварного шва (м). null → медиана")
-    erf_b31g: float = Field(..., description="✓ ИСПОЛЬЗУЕТСЯ - Коэффициент ERF B31G", ge=0, le=1)
-    altitude_m: float = Field(..., description="✓ ИСПОЛЬЗУЕТСЯ - Высота над уровнем моря (м)")
-    latitude: float = Field(..., description="✓ ИСПОЛЬЗУЕТСЯ - Широта", ge=-90, le=90)
-    longitude: float = Field(..., description="✓ ИСПОЛЬЗУЕТСЯ - Долгота", ge=-180, le=180)
-    measurement_distance_m: float = Field(..., description="✓ ИСПОЛЬЗУЕТСЯ - Расстояние вдоль трубопровода (м)", ge=0)
-    pipeline_id: Optional[str] = Field(None, description="⚠️ НЕ ИСПОЛЬЗУЕТСЯ - ID трубопровода (для идентификации)")
-    defect_type: str = Field(..., description="✓ ИСПОЛЬЗУЕТСЯ - Тип дефекта")
-    surface_location: str = Field(..., description="✓ ИСПОЛЬЗУЕТСЯ - Расположение на поверхности (ВНШ/ВНТ)")
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "depth_percent": 9.0,
-                "depth_mm": 0.7,
-                "length_mm": 27.0,
-                "width_mm": 19.0,
-                "wall_thickness_mm": 7.9,
-                "distance_to_weld_m": -1.869,
-                "erf_b31g": 0.52,
-                "altitude_m": 265.2,
-                "latitude": 48.480297,
-                "longitude": 57.666958,
-                "measurement_distance_m": 6.201,
-                "defect_type": "коррозия",
-                "surface_location": "ВНШ",
-                "pipeline_id": "MT-03"
-            }
-        }
-
-
-class MLPredictionResponse(BaseModel):
-    """
-    Ответ с предсказанием критичности дефекта.
-    
-    Содержит предсказанный уровень критичности, вероятности всех классов
-    и метаинформацию о модели.
-    """
-    severity: str = Field(..., description="Предсказанный уровень: normal (низкий риск) / medium (требует мониторинга) / high (критический)")
-    probability: float = Field(..., description="Уверенность модели в предсказании (0-1)")
-    probabilities: Dict[str, float] = Field(..., description="Вероятности всех классов: {normal: 0.x, medium: 0.y, high: 0.z}")
-    model_type: str = Field(..., description="Название модели: RandomForest / XGBoost / LogisticRegression")
-    prediction_timestamp: str = Field(..., description="Время предсказания в формате ISO 8601")
-
-
-def convert_nested_to_flat(nested_request: MLPredictionRequestNested) -> dict:
-    """Конвертация вложенной структуры в плоскую для ML модели"""
-    return {
-        "defect_id": nested_request.defect_id,
-        "segment_number": nested_request.segment_number,
-        "depth_percent": nested_request.details.parameters.depth_percent,
-        "depth_mm": nested_request.details.parameters.depth_mm,
-        "length_mm": nested_request.details.parameters.length_mm,
-        "width_mm": nested_request.details.parameters.width_mm,
-        "wall_thickness_mm": nested_request.details.parameters.wall_thickness_mm,
-        "distance_to_weld_m": nested_request.details.distance_to_weld_m,
-        "erf_b31g": nested_request.details.erf_b31g_code,
-        "altitude_m": nested_request.details.location.altitude,
-        "latitude": nested_request.details.location.latitude,
-        "longitude": nested_request.details.location.longitude,
-        "measurement_distance_m": nested_request.measurement_distance_m,
-        "pipeline_id": nested_request.pipeline_id,
-        "defect_type": nested_request.details.type,
-        "surface_location": nested_request.details.surface_location
+    **Пример ответа:**
+    ```json
+    {
+      "defect_id": "65716dae-81e2-402d-8610-b583fe56dd1a",
+      "segment_number": 3,
+      "measurement_distance_m": 5.803,
+      "pipeline_id": "MT-03",
+      "severity": "medium",
+      "details": {
+        "type": "коррозия",
+        "parameters": {
+          "depth_percent": 11.0,
+          "length_mm": 15.0,
+          "width_mm": 15.0,
+          "depth_mm": null,
+          "wall_thickness_nominal_mm": 7.9
+        },
+        "location": {
+          "latitude": 48.479509,
+          "longitude": 57.665673,
+          "altitude": 265.0
+        },
+        "surface_location": "ВНШ",
+        "distance_to_weld_m": -1.471,
+        "erf_b31g_code": 0.48
+      }
     }
-
-
-@app.post("/ml/predict", response_model=MLPredictionResponse, tags=["ML"], 
-          summary="Предсказание критичности дефекта",
-          response_description="Предсказанный уровень критичности с вероятностями")
-async def predict_defect_criticality(request: Union[MLPredictionRequest, MLPredictionRequestNested]):
-    """
-    # Предсказать критичность дефекта используя ML модель
+    ```
+    """)
+    async def get_defect_endpoint(defect_id: str):
+        deps = get_dependencies()
+        return await defects.get_defect(defect_id, deps['defects_repository'])
     
+    @app.get("/defects/type/{defect_type}", tags=["Defects"],
+             summary="Получить дефекты по типу",
+             description="""Возвращает все дефекты указанного типа.
+             
+    **Доступные типы дефектов:**
+    - коррозия
+    - трещина
+    - вмятина
+    - расслоение
+    - царапина
+    - выработка
+    - потеря металла
+    - деформация
+    
+    **Пример запроса:**
+    ```
+    GET /defects/type/коррозия
+    ```
+    
+    **Пример ответа:** Массив дефектов указанного типа
+    """)
+    async def get_defects_by_type_endpoint(defect_type: str):
+        deps = get_dependencies()
+        return await defects.get_defects_by_type(defect_type, deps['defects_repository'])
+    
+    @app.get("/defects/segment/{segment_id}", tags=["Defects"],
+             summary="Получить дефекты по сегменту",
+             description="""Возвращает все дефекты на указанном сегменте трубопровода.
+             
+    **Пример запроса:**
+    ```
+    GET /defects/segment/3
+    ```
+    
+    **Пример ответа:** Массив всех дефектов на сегменте 3
+    """)
+    async def get_defects_by_segment_endpoint(segment_id: int):
+        deps = get_dependencies()
+        return await defects.get_defects_by_segment(segment_id, deps['defects_repository'])
+    
+    # Analytics
+    @app.get("/statistics", tags=["Analytics"],
+             summary="Статистика по дефектам",
+             description="""Возвращает агрегированную статистику по всем дефектам.
+             
+    **Пример ответа:**
+    ```json
+    {
+      "total_defects": 1234,
+      "by_type": {
+        "коррозия": 456,
+        "трещина": 234,
+        "вмятина": 123
+      },
+      "by_severity": {
+        "normal": 800,
+        "medium": 300,
+        "high": 134
+      },
+      "by_segment": {
+        "1": 200,
+        "2": 300,
+        "3": 400
+      },
+      "average_depth_percent": 12.5,
+      "critical_defects_count": 134
+    }
+    ```
+    """)
+    async def get_statistics():
+        deps = get_dependencies()
+        return await analytics.get_statistics(deps['defects_repository'])
+    
+    # Export
+    @app.get("/export/json", tags=["Export"],
+             summary="Экспорт всех дефектов в JSON",
+             description="""Экспортирует все дефекты в формате JSON для загрузки.
+             
+    **Пример использования:**
+    ```
+    GET /export/json
+    ```
+    
+    Возвращает файл с полным списком всех дефектов в JSON формате.
+    """)
+    async def export_json():
+        deps = get_dependencies()
+        return await export.export_to_json(deps['defects_repository'])
+    
+    # Admin
+    from fastapi import Depends
+    from auth import require_admin
+    
+    @app.post("/admin/defects", tags=["Admin"], dependencies=[Depends(require_admin)],
+              summary="Создать новый дефект с ML предсказанием",
+              description="""🔒 **Требуется авторизация администратора.**
+              
+    Создает новый дефект в базе данных и автоматически предсказывает его критичность с помощью ML модели.
+    
+    **Заголовок запроса:**
+    ```
+    Authorization: Bearer <admin_token>
+    ```
+    
+    **Пример тела запроса:**
+    ```json
+    {
+      "segment_number": 3,
+      "measurement_distance_m": 5.803,
+      "pipeline_id": "MT-03",
+      "details": {
+        "type": "коррозия",
+        "parameters": {
+          "length_mm": 15.0,
+          "width_mm": 15.0,
+          "depth_percent": 11.0,
+          "wall_thickness_nominal_mm": 7.9
+        },
+        "location": {
+          "latitude": 48.479509,
+          "longitude": 57.665673,
+          "altitude": 265.0
+        },
+        "surface_location": "ВНШ",
+        "distance_to_weld_m": -1.471,
+        "erf_b31g_code": 0.48
+      }
+    }
+    ```
+    
+    **Пример ответа:**
+    ```json
+    {
+      "success": true,
+      "defect_id": "65716dae-81e2-402d-8610-b583fe56dd1a",
+      "severity": "medium",
+      "ml_prediction": {
+        "severity": "medium",
+        "probability": 0.85,
+        "model_type": "RandomForest"
+      }
+    }
+    ```
+    """)
+    async def create_defect(request: AdminDefectCreateRequest, current_user: dict = Depends(require_admin)):
+        deps = get_dependencies()
+        return await admin.create_defect_with_ml_prediction(
+            request, current_user, deps['defects_repository'], 
+            deps['ml_classifier'], deps['ml_available']
+        )
+    
+    # ML
+    @app.post("/ml/predict", tags=["ML"], 
+              summary="Предсказание критичности дефекта",
+              description="""
     Анализирует параметры дефекта магистрального трубопровода и предсказывает уровень критичности.
     
     ## Поддерживаемые форматы запроса
@@ -694,137 +569,76 @@ async def predict_defect_criticality(request: Union[MLPredictionRequest, MLPredi
     - **normal** - Нормальный (низкий риск) - дефект не требует срочного вмешательства
     - **medium** - Средний (требует мониторинга) - нужно отслеживать развитие дефекта
     - **high** - Высокий (критический) - требуется немедленное вмешательство
-    """
-    if not ML_AVAILABLE:
-        raise HTTPException(
-            status_code=503,
-            detail="ML модуль недоступен. Проверьте установку зависимостей."
+    """)
+    async def predict(request: Union[MLPredictionRequest, MLPredictionRequestNested]):
+        deps = get_dependencies()
+        return await ml_routes.predict_defect_criticality(
+            request, deps['ml_classifier'], deps['ml_available']
         )
     
-    if ml_classifier is None or not ml_classifier.is_loaded:
-        raise HTTPException(
-            status_code=503,
-            detail="ML модель не загружена. При первом запросе будет выполнено автоматическое обучение (может занять 1-2 минуты)."
-        )
+    @app.get("/ml/model/metrics", tags=["ML"],
+             summary="Метрики ML модели",
+             description="""Возвращает метрики качества обученной ML модели.
+             
+    **Пример ответа:**
+    ```json
+    {
+      "accuracy": 0.92,
+      "f1_score": 0.89,
+      "precision": 0.91,
+      "recall": 0.88,
+      "metadata": {
+        "best_model": "RandomForest",
+        "best_f1_score": 0.89,
+        "training_date": "2025-12-07",
+        "training_samples": 1234
+      },
+      "class_metrics": {
+        "normal": {"precision": 0.95, "recall": 0.92, "f1_score": 0.93},
+        "medium": {"precision": 0.88, "recall": 0.85, "f1_score": 0.86},
+        "high": {"precision": 0.91, "recall": 0.87, "f1_score": 0.89}
+      }
+    }
+    ```
+    """)
+    async def ml_metrics():
+        deps = get_dependencies()
+        return await ml_routes.get_model_metrics(deps['metrics_path'], deps['ml_available'])
     
-    try:
-        # Подготовить данные для предсказания
-        if isinstance(request, MLPredictionRequestNested):
-            # Конвертация вложенной структуры в плоскую
-            sample = convert_nested_to_flat(request)
-        else:
-            # Плоская структура используется как есть
-            sample = request.dict()
-        
-        # Предсказание
-        result = ml_classifier.predict(sample)
-        
-        return MLPredictionResponse(**result)
-        
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Ошибка в данных: {str(e)}")
-    except Exception as e:
-        logger.error(f"ML prediction error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка предсказания: {str(e)}")
+    @app.get("/ml/model/info", tags=["ML"],
+             summary="Информация о ML модели",
+             description="""Возвращает информацию о загруженной ML модели.
+             
+    **Пример ответа (модель загружена):**
+    ```json
+    {
+      "status": "loaded",
+      "model_type": "RandomForest",
+      "is_loaded": true,
+      "model_path": "models/best_model.joblib",
+      "features_count": 15,
+      "training_date": "2025-12-07",
+      "version": "1.0.0"
+    }
+    ```
+    
+    **Пример ответа (модель недоступна):**
+    ```json
+    {
+      "status": "unavailable",
+      "message": "ML модуль не установлен"
+    }
+    ```
+    """)
+    async def ml_info():
+        deps = get_dependencies()
+        return await ml_routes.get_model_info(deps['ml_classifier'], deps['ml_available'])
 
 
-@app.get("/ml/model/metrics", tags=["ML"], 
-          summary="Метрики обученной ML модели",
-          response_description="Classification report, confusion matrix, feature importance")
-async def get_model_metrics():
-    """
-    # Получить метрики обученной модели
-    
-    Возвращает подробные метрики качества модели машинного обучения:
-    - Classification report (precision, recall, f1-score для каждого класса)
-    - Confusion matrix (матрица ошибок)
-    - Feature importance (важность признаков для предсказания)
-    - Общие показатели качества (accuracy, macro avg, weighted avg)
-    
-    ## Типы метрик:
-    - **Precision** - точность (доля правильных позитивных предсказаний)
-    - **Recall** - полнота (доля найденных дефектов нужного типа)
-    - **F1-score** - гармоническое среднее precision и recall
-    - **Support** - количество примеров каждого класса в тестовом наборе
-    
-    ## Классы (уровни критичности):
-    - normal - Нормальный (низкий риск)
-    - medium - Средний (требует мониторинга)
-    - high - Высокий (критический)
-    """
-    if not ML_AVAILABLE:
-        raise HTTPException(
-            status_code=503,
-            detail="ML модуль недоступен"
-        )
-    
-    try:
-        if not METRICS_PATH.exists():
-            raise HTTPException(
-                status_code=404,
-                detail="Метрики не найдены. Модель не обучена. Запустите: python -m src.ml.train"
-            )
-        
-        with open(METRICS_PATH, 'r', encoding='utf-8') as f:
-            metrics = json.load(f)
-        
-        return metrics
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error loading metrics: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/ml/model/info", tags=["ML"],
-          summary="Информация о ML модели",
-          response_description="Метаданные и характеристики загруженной модели")
-async def get_model_info():
-    """
-    # Получить информацию о загруженной ML модели
-    
-    Возвращает метаинформацию о текущей модели машинного обучения:
-    - Тип модели (RandomForest / XGBoost / LogisticRegression)
-    - F1 score (средний показатель качества)
-    - Дата обучения модели
-    - Используемые признаки для предсказания
-    - Классы предсказания (уровни критичности)
-    - Состояние загрузки модели
-    
-    ## Используемые признаки:
-    1. depth_percent - Глубина дефекта
-    2. erf_b31g_code - Коэффициент ERF B31G
-    3. latitude, longitude, altitude - Геолокация
-    4. measurement_distance_m - Расстояние по трубопроводу
-    5. defect_type - Тип дефекта
-    6. surface_location - Расположение на поверхности
-    """
-    if not ML_AVAILABLE:
-        return {
-            "status": "unavailable",
-            "message": "ML модуль не установлен"
-        }
-    
-    if ml_classifier is None:
-        return {
-            "status": "not_initialized",
-            "message": "ML классификатор не инициализирован"
-        }
-    
-    try:
-        info = ml_classifier.get_model_info()
-        return info
-    except Exception as e:
-        logger.error(f"Error getting model info: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+# Настройка роутов при старте
+setup_routes()
 
 
 if __name__ == '__main__':
     import uvicorn
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=8000,
-        log_level="info"
-    )
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")

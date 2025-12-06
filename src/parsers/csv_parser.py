@@ -10,20 +10,11 @@ import pandas as pd
 from datetime import datetime
 import uuid
 
-from models import (
+from core.models import (
     Defect, DefectType, DefectParameters, Location, 
     SurfaceLocation
 )
 
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('parser.log'),
-        logging.StreamHandler()
-    ]
-)
 logger = logging.getLogger(__name__)
 
 
@@ -233,13 +224,11 @@ class CSVParser:
                 measurement_number=measurement_number,
                 measurement_distance_m=measurement_distance_m,
                 defect_type=defect_type,
-                # severity=severity,
                 parameters=parameters,
                 location=location,
                 surface_location=surface_location,
                 distance_to_weld_m=distance_to_weld_m,
                 erf_b31g_code=erf_b31g_code,
-                source_file=source_file,
                 pipeline_id=f"MT-{segment_number:02d}"
             )
             

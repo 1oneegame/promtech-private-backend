@@ -13,7 +13,7 @@ from pydantic import BaseModel
 import json
 from dotenv import load_dotenv
 
-from models import Defect, Pipeline, PipelineObject, DefectResponse
+from core.models import Defect, Pipeline, PipelineObject, DefectResponse, AdminUser
 
 # Загружаем переменные окружения из .env
 load_dotenv()
@@ -81,6 +81,16 @@ class MongoDBConnection:
             defects_collection.create_index('segment_number')
             defects_collection.create_index('defect_type')
             logger.info("Индексы для коллекции 'defects' созданы")
+            
+            # Коллекция админ-пользователей
+            if 'admin_users' not in self.db.list_collection_names():
+                self.db.create_collection('admin_users')
+                logger.info("Создана коллекция 'admin_users'")
+            
+            # Создаём индексы для админов
+            admin_collection = self.db['admin_users']
+            admin_collection.create_index('username', unique=True)
+            logger.info("Индексы для коллекции 'admin_users' созданы")
             
         except Exception as e:
             logger.warning(f"Ошибка при инициализации коллекций: {str(e)}")
@@ -165,6 +175,137 @@ class DefectsRepository:
             logger.error(f"Ошибка при получении дефектов: {str(e)}")
             return []
     
+    def get_defect_by_id(self, defect_id: str) -> Optional[Defect]:
+        """Получает дефект по ID
+        
+        Args:
+            defect_id: ID дефекта
+            
+        Returns:
+            Defect или None если не найден
+        """
+        try:
+            if self.db_connection.local_mode:
+                for defect in self.db_connection.defects_data:
+                    if defect.defect_id == defect_id:
+                        return defect
+                return None
+            else:
+                collection = self._get_collection()
+                defect_dict = collection.find_one({"defect_id": defect_id})
+                if defect_dict:
+                    return Defect(**defect_dict)
+                return None
+        except Exception as e:
+            logger.error(f"Ошибка при получении дефекта по ID: {str(e)}")
+            return None
+    
+    def check_defect_exists(self, defect_id: str) -> bool:
+        """Проверяет существование дефекта по ID
+        
+        Args:
+            defect_id: ID дефекта
+            
+        Returns:
+            bool: True если существует
+        """
+        try:
+            if self.db_connection.local_mode:
+                return any(d.defect_id == defect_id for d in self.db_connection.defects_data)
+            else:
+                collection = self._get_collection()
+                return collection.count_documents({"defect_id": defect_id}) > 0
+        except Exception as e:
+            logger.error(f"Ошибка при проверке существования дефекта: {str(e)}")
+            return False
+    
+    def insert_single_defect(self, defect: Defect) -> Dict[str, Any]:
+        """Вставляет один дефект в БД
+        
+        Args:
+            defect: Объект дефекта
+            
+        Returns:
+            Dict с результатом операции
+        """
+        result = {
+            "inserted": False,
+            "defect_id": defect.defect_id,
+            "error": None
+        }
+        
+        try:
+            # Проверка уникальности
+            if self.check_defect_exists(defect.defect_id):
+                result["error"] = f"Defect with ID '{defect.defect_id}' already exists"
+                return result
+            
+            if self.db_connection.local_mode:
+                self.db_connection.defects_data.append(defect)
+                result["inserted"] = True
+                logger.info(f"Добавлен дефект {defect.defect_id} в локальное хранилище")
+            else:
+                collection = self._get_collection()
+                defect_dict = json.loads(defect.model_dump_json())
+                collection.insert_one(defect_dict)
+                result["inserted"] = True
+                logger.info(f"Добавлен дефект {defect.defect_id} в MongoDB")
+        
+        except Exception as e:
+            error_msg = f"Ошибка при вставке дефекта: {str(e)}"
+            logger.error(error_msg)
+            result["error"] = error_msg
+        
+        return result
+    
+    def update_defect_severity(self, defect_id: str, severity: str, probability: float) -> bool:
+        """Обновляет severity и probability дефекта
+        
+        Args:
+            defect_id: ID дефекта
+            severity: Новый уровень критичности
+            probability: Вероятность предсказания
+            
+        Returns:
+            bool: Успешность операции
+        """
+        try:
+            from datetime import datetime
+            
+            if self.db_connection.local_mode:
+                for defect in self.db_connection.defects_data:
+                    if defect.defect_id == defect_id:
+                        defect.severity = severity
+                        defect.probability = probability
+                        defect.updated_at = datetime.utcnow()
+                        logger.info(f"Обновлен severity дефекта {defect_id}: {severity} ({probability:.2f})")
+                        return True
+                return False
+            else:
+                collection = self._get_collection()
+                result = collection.update_one(
+                    {"defect_id": defect_id},
+                    {
+                        "$set": {
+                            "severity": severity,
+                            "probability": probability,
+                            "updated_at": datetime.utcnow()
+                        },
+                        "$unset": {
+                            "details.severity": "",
+                            "details.probability": "",
+                            "ml_prediction_probability": ""
+                        }
+                    }
+                )
+                if result.modified_count > 0:
+                    logger.info(f"Обновлен severity дефекта {defect_id}: {severity} ({probability:.2f})")
+                    return True
+                return False
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении severity дефекта: {str(e)}")
+            return False
+    
     def get_defects_by_type(self, defect_type: str) -> List[Defect]:
         """Получает дефекты по типу
         
@@ -227,13 +368,22 @@ class DefectsRepository:
         
         # Подсчитываем статистику
         defects_by_type = {}
+        defects_by_severity = {}
         defects_by_location = {}
         depth_values = []
+        critical_count = 0
         
         for defect in defects:
             # По типу
             type_key = defect.defect_type.value
             defects_by_type[type_key] = defects_by_type.get(type_key, 0) + 1
+            
+            # По severity
+            if defect.severity:
+                severity_key = defect.severity.value
+                defects_by_severity[severity_key] = defects_by_severity.get(severity_key, 0) + 1
+                if severity_key == "critical":
+                    critical_count += 1
             
             # По локации
             location_key = defect.surface_location.value
@@ -248,9 +398,10 @@ class DefectsRepository:
         return {
             "total_defects": len(defects),
             "defects_by_type": defects_by_type,
+            "defects_by_severity": defects_by_severity,
             "defects_by_location": defects_by_location,
             "average_depth_percent": round(avg_depth, 2),
-            "critical_defects_count": 0  # Пока не считаем
+            "critical_defects_count": critical_count
         }
     
     def clear_all(self) -> bool:
@@ -339,3 +490,68 @@ class PipelinesRepository:
         except Exception as e:
             logger.error(f"Ошибка при получении трубопроводов: {str(e)}")
             return []
+
+
+class AdminUsersRepository:
+    def __init__(self, db_connection: MongoDBConnection):
+        self.db_connection = db_connection
+        self.local_admins: List[AdminUser] = []
+    
+    def get_user_by_username(self, username: str) -> Optional[AdminUser]:
+        if self.db_connection.local_mode:
+            for user in self.local_admins:
+                if user.username == username:
+                    return user
+            return None
+        else:
+            try:
+                user_doc = self.db_connection.db['admin_users'].find_one({"username": username})
+                if user_doc:
+                    return AdminUser(**user_doc)
+                return None
+            except Exception as e:
+                logger.error(f"Error getting user: {str(e)}")
+                return None
+    
+    def create_admin(self, admin_user: AdminUser) -> Dict[str, Any]:
+        if self.db_connection.local_mode:
+            if any(u.username == admin_user.username for u in self.local_admins):
+                return {"success": False, "error": "User already exists"}
+            self.local_admins.append(admin_user)
+            logger.info(f"[LOCAL] Created admin: {admin_user.username}")
+            return {"success": True, "username": admin_user.username}
+        else:
+            try:
+                user_doc = admin_user.model_dump()
+                result = self.db_connection.db['admin_users'].insert_one(user_doc)
+                logger.info(f"[MONGODB] Created admin: {admin_user.username}")
+                return {"success": True, "username": admin_user.username, "id": str(result.inserted_id)}
+            except Exception as e:
+                logger.error(f"Error creating admin: {str(e)}")
+                return {"success": False, "error": str(e)}
+    
+    def get_all_admins(self) -> List[AdminUser]:
+        if self.db_connection.local_mode:
+            return self.local_admins
+        else:
+            try:
+                users = []
+                for doc in self.db_connection.db['admin_users'].find({"is_active": True}):
+                    users.append(AdminUser(**doc))
+                return users
+            except Exception as e:
+                logger.error(f"Error getting admins: {str(e)}")
+                return []
+    
+    def delete_admin(self, username: str) -> bool:
+        if self.db_connection.local_mode:
+            original_len = len(self.local_admins)
+            self.local_admins = [u for u in self.local_admins if u.username != username]
+            return len(self.local_admins) < original_len
+        else:
+            try:
+                result = self.db_connection.db['admin_users'].delete_one({"username": username})
+                return result.deleted_count > 0
+            except Exception as e:
+                logger.error(f"Error deleting admin: {str(e)}")
+                return False

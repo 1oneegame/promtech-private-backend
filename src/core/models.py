@@ -1,3 +1,15 @@
+# Admin User Model
+from datetime import datetime
+from pydantic import BaseModel, Field
+
+class AdminUser(BaseModel):
+    username: str = Field(..., description='Username')
+    password_hash: str = Field(..., description='Bcrypt password hash')
+    role: str = Field(default='admin', description='User role')
+    created_at: datetime = Field(default_factory=datetime.utcnow, description='Creation date')
+    is_active: bool = Field(default=True, description='Is user active')
+
+
 """
 IntegrityOS Data Models
 Модели данных для трубопроводов, объектов контроля и дефектов
@@ -132,25 +144,18 @@ class Defect(BaseModel):
     distance_to_weld_m: Optional[float] = Field(None, description="Расстояние до шва [м]")
     erf_b31g_code: Optional[float] = Field(None, description="ERF B31G коэффициент")
     
-    # Стандарты и оценки
-    quality_grade: Optional[QualityGrade] = Field(None, description="Оценка качества")
-    
     # Метаданные
     pipeline_id: Optional[str] = Field(None, description="ID трубопровода")
-    inspection_date: Optional[datetime] = Field(None, description="Дата проведения инспекции")
-    inspection_method: Optional[str] = Field(None, description="Метод контроля (VIK, PVK, MFL и т.п.)")
     
-    # Критичность (severity classification)
-    severity: Optional[SeverityLevel] = Field(None, description="Уровень критичности (normal/medium/high/critical)")
-    severity_probability: Optional[float] = Field(None, description="Вероятность классификации критичности (0-1)")
+    # Критичность (на верхнем уровне)
+    severity: Optional[SeverityLevel] = Field(None, description="Уровень критичности")
+    probability: Optional[float] = Field(None, description="Вероятность предсказания (0-1)")
     
-    # AI классификация
-    ml_probability: Optional[float] = Field(None, description="Вероятность предсказания (0-1)")
-    
-    # Источник данных
-    source_file: Optional[str] = Field(None, description="Исходный файл")
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="Дата создания записи")
-    updated_at: datetime = Field(default_factory=datetime.utcnow, description="Дата обновления записи")
+    # Источник данных (не сохраняется при создании из CSV)
+    source_file: Optional[str] = Field(None, description="Исходный файл", exclude=True)
+    created_at: Optional[datetime] = Field(None, description="Дата создания записи", exclude=True)
+    updated_at: Optional[datetime] = Field(None, description="Дата обновления записи", exclude=True)
+    ml_probability: Optional[float] = Field(None, description="Старое поле (deprecated)", exclude=True)
 
     class Config:
         json_encoders = {
@@ -272,6 +277,7 @@ class StatisticsResponse(BaseModel):
     """Response для статистики"""
     total_defects: int
     defects_by_type: Dict[str, int]
+    defects_by_severity: Dict[str, int]
     defects_by_location: Dict[str, int]
     average_depth_percent: float
     critical_defects_count: int
@@ -297,3 +303,172 @@ class StatisticsResponse(BaseModel):
                 "critical_defects_count": 1
             }
         }
+
+
+# ============================================================================
+# AUTHENTICATION MODELS
+# ============================================================================
+
+class LoginRequest(BaseModel):
+    """Request model for user login"""
+    username: str = Field(..., description="Username", min_length=3, max_length=50)
+    password: str = Field(..., description="Password", min_length=4)
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "username": "admin",
+                "password": "admin"
+            }
+        }
+
+
+class TokenResponse(BaseModel):
+    """Response model for successful authentication"""
+    access_token: str = Field(..., description="JWT access token")
+    token_type: str = Field(default="bearer", description="Token type")
+    expires_in: int = Field(..., description="Token expiration time in seconds")
+    role: str = Field(..., description="User role (admin/user)")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                "token_type": "bearer",
+                "expires_in": 3600,
+                "role": "admin"
+            }
+        }
+
+
+class UserInfo(BaseModel):
+    """User information response"""
+    username: str = Field(..., description="Username")
+    role: str = Field(..., description="User role")
+
+
+# ============================================================================
+# ADMIN DEFECT CREATION MODELS
+# ============================================================================
+
+class AdminDefectCreateRequest(BaseModel):
+    """Request model for admin to create a new defect (without severity - ML will predict)"""
+    defect_id: Optional[str] = Field(None, description="Unique defect identifier (auto-generated if not provided)")
+    segment_number: int = Field(..., description="Segment number", ge=1)
+    measurement_distance_m: float = Field(..., description="Measurement distance [m]", ge=0)
+    pipeline_id: str = Field(..., description="Pipeline ID")
+    
+    # Details structure
+    details: "AdminDefectDetailsRequest" = Field(..., description="Defect details")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "defect_id": "DEF-2024-001",
+                "segment_number": 5,
+                "measurement_distance_m": 150.5,
+                "pipeline_id": "AKT-KZ",
+                "details": {
+                    "type": "коррозия",
+                    "parameters": {
+                        "length_mm": 25.0,
+                        "width_mm": 20.0,
+                        "depth_mm": 3.5,
+                        "depth_percent": 12.5,
+                        "wall_thickness_nominal_mm": 8.0
+                    },
+                    "location": {
+                        "latitude": 48.5,
+                        "longitude": 58.2,
+                        "altitude": 120.0
+                    },
+                    "surface_location": "ВНШ",
+                    "distance_to_weld_m": 2.5,
+                    "erf_b31g_code": 0.85
+                }
+            }
+        }
+
+
+class AdminDefectDetailsRequest(BaseModel):
+    """Defect details for admin creation (without severity)"""
+    type: str = Field(..., description="Defect type")
+    parameters: DefectParameters = Field(..., description="Physical parameters")
+    location: Location = Field(..., description="GPS coordinates")
+    surface_location: str = Field(..., description="Surface location (ВНШ/ВНТ)")
+    distance_to_weld_m: Optional[float] = Field(None, description="Distance to weld [m]")
+    erf_b31g_code: float = Field(..., description="ERF B31G coefficient")
+
+
+class DefectCreateResponse(BaseModel):
+    """Response for created defect with ML predictions"""
+    defect_id: str = Field(..., description="Defect ID")
+    segment_number: int = Field(..., description="Segment number")
+    measurement_distance_m: float = Field(..., description="Measurement distance [m]")
+    pipeline_id: str = Field(..., description="Pipeline ID")
+    details: "DefectCreateDetailsResponse" = Field(..., description="Defect details with predictions")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "defect_id": "DEF-2024-001",
+                "segment_number": 5,
+                "measurement_distance_m": 150.5,
+                "pipeline_id": "AKT-KZ",
+                "details": {
+                    "type": "коррозия",
+                    "parameters": {
+                        "length_mm": 25.0,
+                        "width_mm": 20.0,
+                        "depth_mm": 3.5,
+                        "depth_percent": 12.5,
+                        "wall_thickness_nominal_mm": 8.0
+                    },
+                    "location": {
+                        "latitude": 48.5,
+                        "longitude": 58.2,
+                        "altitude": 120.0
+                    },
+                    "surface_location": "ВНШ",
+                    "distance_to_weld_m": 2.5,
+                    "severity": "medium",
+                    "probability": 0.87,
+                    "erf_b31g_code": 0.85
+                }
+            }
+        }
+
+
+class DefectCreateDetailsResponse(BaseModel):
+    """Defect details response with ML predictions"""
+    type: str = Field(..., description="Defect type")
+    parameters: DefectParameters = Field(..., description="Physical parameters")
+    location: Location = Field(..., description="GPS coordinates")
+    surface_location: str = Field(..., description="Surface location")
+    distance_to_weld_m: Optional[float] = Field(None, description="Distance to weld [m]")
+    severity: str = Field(..., description="ML-predicted severity (normal/medium/high)")
+    probability: float = Field(..., description="ML prediction confidence (0-1)")
+    erf_b31g_code: float = Field(..., description="ERF B31G coefficient")
+
+
+class BulkUpdateResponse(BaseModel):
+    """Response for bulk severity update operation"""
+    total_defects: int = Field(..., description="Total defects processed")
+    updated: int = Field(..., description="Successfully updated defects")
+    failed: int = Field(..., description="Failed to update")
+    errors: List[str] = Field(default_factory=list, description="Error messages")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "total_defects": 100,
+                "updated": 98,
+                "failed": 2,
+                "errors": [
+                    "Defect DEF-001: Missing required field 'depth_percent'",
+                    "Defect DEF-055: ML prediction failed"
+                ]
+            }
+        }
+
+

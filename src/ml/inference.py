@@ -210,6 +210,47 @@ def predict_defect(sample: Dict[str, Any]) -> Dict[str, Any]:
     return classifier.predict(sample)
 
 
+def defect_to_ml_input(defect) -> Dict[str, Any]:
+    """
+    Конвертирует объект Defect в формат для ML предсказания.
+    
+    Args:
+        defect: Объект Defect из models.py
+        
+    Returns:
+        Dict с параметрами для ML модели
+    """
+    # Извлекаем данные из вложенных структур
+    params = defect.parameters
+    location = defect.location
+    
+    # Формируем ML input согласно NUMERICAL_FEATURES и CATEGORICAL_FEATURES из config.py
+    ml_input = {
+        # Численные признаки
+        "depth_percent": params.depth_percent,
+        "depth_mm": params.depth_mm,
+        "erf_b31g": defect.erf_b31g_code,
+        "altitude_m": location.altitude if location.altitude is not None else 0.0,
+        "latitude": location.latitude,
+        "longitude": location.longitude,
+        "measurement_distance_m": defect.measurement_distance_m,
+        "length_mm": params.length_mm,
+        "width_mm": params.width_mm,
+        "wall_thickness_mm": params.wall_thickness_nominal_mm,
+        "distance_to_weld_m": defect.distance_to_weld_m,
+        
+        # Категориальные признаки
+        "defect_type": defect.defect_type.value if hasattr(defect.defect_type, 'value') else str(defect.defect_type),
+        "surface_location": defect.surface_location.value if hasattr(defect.surface_location, 'value') else str(defect.surface_location),
+        
+        # Информационные поля (не используются в ML, но могут быть полезны)
+        "pipeline_id": defect.pipeline_id or "UNKNOWN",
+        "defect_id": defect.defect_id or "UNKNOWN"
+    }
+    
+    return ml_input
+
+
 if __name__ == "__main__":
     # Тестовый запуск
     classifier = DefectClassifier()
