@@ -133,7 +133,7 @@ class AuditLog(BaseModel):
 class Favorite(BaseModel):
     """Избранный объект"""
     favorite_id: Optional[str] = Field(None, description='MongoDB ObjectId')
-    username: str = Field(..., description='Username')
+    username: Optional[str] = Field(None, description='Username (устанавливается автоматически)')
     object_id: int = Field(..., description='ID объекта (сегмент)')
     object_name: str = Field(..., description='Название объекта')
     pipeline: str = Field(..., description='Магистраль')
@@ -282,10 +282,10 @@ class Defect(BaseModel):
     severity: Optional[SeverityLevel] = Field(None, description="Уровень критичности")
     probability: Optional[float] = Field(None, description="Вероятность предсказания (0-1)")
     
-    # Источник данных (не сохраняется при создании из CSV)
-    source_file: Optional[str] = Field(None, description="Исходный файл", exclude=True)
-    created_at: Optional[datetime] = Field(None, description="Дата создания записи", exclude=True)
-    updated_at: Optional[datetime] = Field(None, description="Дата обновления записи", exclude=True)
+    # Источник данных
+    source_file: Optional[str] = Field(None, description="Исходный файл")
+    created_at: Optional[datetime] = Field(None, description="Дата создания записи")
+    updated_at: Optional[datetime] = Field(None, description="Дата обновления записи")
     ml_probability: Optional[float] = Field(None, description="Старое поле (deprecated)", exclude=True)
 
     class Config:

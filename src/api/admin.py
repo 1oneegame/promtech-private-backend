@@ -2,19 +2,24 @@
 Admin endpoints
 """
 
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File
 from datetime import datetime
 import logging
-from typing import Optional
+from typing import Optional, List
+import tempfile
+import os
 
 from core import (
     AdminDefectCreateRequest, DefectCreateResponse, DefectCreateDetailsResponse,
     BulkUpdateResponse, Defect, DefectType, SurfaceLocation, SeverityLevel, DefectsRepository
 )
+from core.models import AuditLog, AuditLogAction
+from core.user_repositories import AuditLogRepository
 from auth import require_admin
 from parsers import CSVParser
 
 logger = logging.getLogger(__name__)
+
 
 router = APIRouter(tags=["Admin"])
 
@@ -22,11 +27,17 @@ router = APIRouter(tags=["Admin"])
 _repository_instance: Optional[DefectsRepository] = None
 _ml_classifier_instance = None
 _ml_available_flag = False
+_audit_repository_instance: Optional[AuditLogRepository] = None
 
 def set_repository(repository: DefectsRepository):
     """Установить репозиторий для admin роутов"""
     global _repository_instance
     _repository_instance = repository
+
+def set_audit_repository(audit_repo: AuditLogRepository):
+    """Установить репозиторий аудита для admin роутов"""
+    global _audit_repository_instance
+    _audit_repository_instance = audit_repo
 
 def set_ml_dependencies(ml_classifier, ml_available: bool):
     """Установить ML зависимости для admin роутов"""
@@ -43,6 +54,10 @@ def get_defects_repository() -> DefectsRepository:
         )
     return _repository_instance
 
+def get_audit_repository() -> Optional[AuditLogRepository]:
+    """Получить audit_repository"""
+    return _audit_repository_instance
+
 def get_ml_classifier():
     """Получить ml_classifier"""
     return _ml_classifier_instance
@@ -50,6 +65,20 @@ def get_ml_classifier():
 def get_ml_available() -> bool:
     """Получить ml_available флаг"""
     return _ml_available_flag
+
+def create_audit_log(user: str, action: AuditLogAction, entity: str, entity_name: str, entity_id: str = None, details: dict = None):
+    """Создать запись в журнале аудита"""
+    audit_repo = get_audit_repository()
+    if audit_repo:
+        log = AuditLog(
+            user=user,
+            action=action,
+            entity=entity,
+            entity_name=entity_name,
+            entity_id=entity_id,
+            details=details
+        )
+        audit_repo.create_log(log)
 
 
 @router.post("/reload", dependencies=[Depends(require_admin)])
@@ -67,6 +96,18 @@ async def reload_data(
         result = defects_repository.insert_defects(defects)
         
         logger.info(f"[ADMIN] User {current_user['username']} reloaded data")
+        
+        # Создаем запись в журнале аудита
+        create_audit_log(
+            user=current_user['username'],
+            action=AuditLogAction.IMPORTED,
+            entity="Данные",
+            entity_name="CSV файлы",
+            details={
+                "inserted": result["inserted"],
+                "errors": len(errors)
+            }
+        )
         
         return {
             "status": "success",
@@ -91,12 +132,107 @@ async def clear_data(
         
         logger.info(f"[ADMIN] User {current_user['username']} cleared all data")
         
+        # Создаем запись в журнале аудита
+        create_audit_log(
+            user=current_user['username'],
+            action=AuditLogAction.DELETED,
+            entity="Данные",
+            entity_name="Все дефекты"
+        )
+        
         if success:
             return {"status": "success", "message": "All defects cleared"}
         else:
             raise HTTPException(status_code=500, detail="Clear failed")
     except Exception as e:
         logger.error(f"Error clearing data: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/upload", dependencies=[Depends(require_admin)])
+async def upload_files(
+    files: List[UploadFile] = File(...),
+    current_user: dict = Depends(require_admin)
+):
+    """Загрузить CSV/XLSX файлы и импортировать данные в БД"""
+    try:
+        defects_repository = get_defects_repository()
+        parser = CSVParser(data_dir='data')
+        
+        total_defects = []
+        all_errors = []
+        processed_files = []
+        
+        for file in files:
+            filename = file.filename or "unknown"
+            ext = os.path.splitext(filename)[1].lower()
+            
+            if ext not in ['.csv', '.xlsx', '.xls']:
+                all_errors.append(f"Неподдерживаемый формат файла: {filename}")
+                continue
+            
+            # Сохраняем файл во временную директорию
+            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+                content = await file.read()
+                tmp.write(content)
+                tmp_path = tmp.name
+            
+            try:
+                # Парсим файл
+                if ext == '.xlsx' or ext == '.xls':
+                    defects, errors = parser.parse_xlsx_file(tmp_path)
+                else:
+                    defects, errors = parser.parse_csv_file(tmp_path)
+                
+                # Устанавливаем source_file для всех дефектов
+                for defect in defects:
+                    defect.source_file = filename
+                
+                total_defects.extend(defects)
+                all_errors.extend(errors)
+                processed_files.append({
+                    "filename": filename,
+                    "defects_count": len(defects),
+                    "errors_count": len(errors)
+                })
+                
+                logger.info(f"Parsed {len(defects)} defects from {filename}")
+                
+            finally:
+                # Удаляем временный файл
+                os.unlink(tmp_path)
+        
+        # Вставляем все дефекты в БД
+        result = {"inserted": 0}
+        if total_defects:
+            result = defects_repository.insert_defects(total_defects)
+        
+        logger.info(f"[ADMIN] User {current_user['username']} uploaded {len(files)} files, inserted {result['inserted']} defects")
+        
+        # Создаем запись в журнале аудита
+        create_audit_log(
+            user=current_user['username'],
+            action=AuditLogAction.IMPORTED,
+            entity="Дефекты",
+            entity_name=", ".join([f.filename or "unknown" for f in files]),
+            details={
+                "files_count": len(processed_files),
+                "inserted": result.get("inserted", 0),
+                "errors_count": len(all_errors)
+            }
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Загружено {len(processed_files)} файлов",
+            "inserted": result.get("inserted", 0),
+            "total_parsed": len(total_defects),
+            "files": processed_files,
+            "errors": all_errors[:20]  # Ограничиваем количество ошибок
+        }
+        
+    except Exception as e:
+        logger.error(f"Error uploading files: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -182,6 +318,19 @@ async def update_all_defect_severities(
                 logger.error(f"Error updating defect {defect.defect_id}: {str(e)}")
         
         logger.info(f"[ADMIN] User {current_user['username']} updated {updated}/{total_defects} defect severities")
+        
+        # Создаем запись в журнале аудита
+        create_audit_log(
+            user=current_user['username'],
+            action=AuditLogAction.UPDATED,
+            entity="ML Анализ",
+            entity_name="Критичность дефектов",
+            details={
+                "total_defects": total_defects,
+                "updated": updated,
+                "failed": failed
+            }
+        )
         
         return BulkUpdateResponse(
             total_defects=total_defects,

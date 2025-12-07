@@ -133,9 +133,12 @@ async def lifespan(app: FastAPI):
         logger.info("[STARTUP] ML модуль недоступен")
     
     # Установить зависимости для admin роутов
-    from api.admin import set_repository, set_ml_dependencies
+    from api.admin import set_repository, set_ml_dependencies, set_audit_repository
+    from core.user_repositories import AuditLogRepository
     set_repository(defects_repository)
     set_ml_dependencies(ml_classifier, ML_AVAILABLE)
+    audit_repository = AuditLogRepository(db_connection)
+    set_audit_repository(audit_repository)
     logger.info("[STARTUP] Admin routes dependencies initialized")
     
     yield
@@ -318,7 +321,7 @@ def setup_routes():
     ]
     ```
     """)
-    async def get_defects_endpoint(defect_type=None, segment=None):
+    async def get_defects_endpoint(defect_type: Optional[str] = None, segment: Optional[int] = None):
         deps = get_dependencies()
         return await defects.get_defects(defect_type, segment, deps['defects_repository'])
     
