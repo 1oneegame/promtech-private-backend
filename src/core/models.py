@@ -1,5 +1,7 @@
 # Admin User Model
+from typing import Optional, Dict, Any
 from datetime import datetime
+from enum import Enum
 from pydantic import BaseModel, Field
 
 class AdminUser(BaseModel):
@@ -8,6 +10,135 @@ class AdminUser(BaseModel):
     role: str = Field(default='admin', description='User role')
     created_at: datetime = Field(default_factory=datetime.utcnow, description='Creation date')
     is_active: bool = Field(default=True, description='Is user active')
+
+
+# User Profile Model
+class UserProfile(BaseModel):
+    """Профиль пользователя"""
+    username: str = Field(..., description='Username')
+    full_name: str = Field(..., description='Полное имя')
+    email: str = Field(..., description='Email')
+    phone: Optional[str] = Field(None, description='Телефон')
+    organization: Optional[str] = Field(None, description='Организация')
+    position: Optional[str] = Field(None, description='Должность')
+    department: Optional[str] = Field(None, description='Отдел')
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class UserProfileUpdate(BaseModel):
+    """Обновление профиля пользователя"""
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    organization: Optional[str] = None
+    position: Optional[str] = None
+    department: Optional[str] = None
+
+
+# User Settings Model
+class UserSettings(BaseModel):
+    """Настройки пользователя"""
+    username: str = Field(..., description='Username')
+    theme: str = Field(default='light', description='Тема оформления (light/dark)')
+    language: str = Field(default='ru', description='Язык интерфейса (ru/kz/en)')
+    units: str = Field(default='metric', description='Единицы измерения (metric/imperial)')
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class UserSettingsUpdate(BaseModel):
+    """Обновление настроек пользователя"""
+    theme: Optional[str] = None
+    language: Optional[str] = None
+    units: Optional[str] = None
+
+
+# Planning/Tasks Model
+class TaskStatus(str, Enum):
+    """Статус задачи"""
+    PLANNED = "planned"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
+class Task(BaseModel):
+    """Задача планирования"""
+    task_id: Optional[str] = Field(None, description='MongoDB ObjectId')
+    title: str = Field(..., description='Название задачи')
+    object_name: str = Field(..., description='Название объекта')
+    object_id: Optional[int] = Field(None, description='ID объекта (сегмент)')
+    date: str = Field(..., description='Дата выполнения (YYYY-MM-DD)')
+    time: str = Field(..., description='Время выполнения (HH:MM)')
+    assigned_to: str = Field(..., description='Ответственный')
+    status: TaskStatus = Field(default=TaskStatus.PLANNED, description='Статус задачи')
+    method: Optional[str] = Field(None, description='Метод диагностики')
+    description: Optional[str] = Field(None, description='Описание задачи')
+    created_by: str = Field(..., description='Создатель задачи')
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class TaskCreate(BaseModel):
+    """Создание задачи"""
+    title: str
+    object_name: str
+    object_id: Optional[int] = None
+    date: str
+    time: str
+    assigned_to: str
+    method: Optional[str] = None
+    description: Optional[str] = None
+
+
+class TaskUpdate(BaseModel):
+    """Обновление задачи"""
+    title: Optional[str] = None
+    object_name: Optional[str] = None
+    object_id: Optional[int] = None
+    date: Optional[str] = None
+    time: Optional[str] = None
+    assigned_to: Optional[str] = None
+    status: Optional[TaskStatus] = None
+    method: Optional[str] = None
+    description: Optional[str] = None
+
+
+# Audit Log Model
+class AuditLogAction(str, Enum):
+    """Действие в логе"""
+    CREATED = "created"
+    UPDATED = "updated"
+    DELETED = "deleted"
+    IMPORTED = "imported"
+    LOGIN = "login"
+    LOGOUT = "logout"
+
+
+class AuditLog(BaseModel):
+    """Запись в журнале аудита"""
+    log_id: Optional[str] = Field(None, description='MongoDB ObjectId')
+    user: str = Field(..., description='Пользователь')
+    action: AuditLogAction = Field(..., description='Действие')
+    entity: str = Field(..., description='Тип сущности (Объект, Дефект, Диагностика и т.д.)')
+    entity_name: str = Field(..., description='Название сущности')
+    entity_id: Optional[str] = Field(None, description='ID сущности')
+    ip_address: Optional[str] = Field(None, description='IP адрес')
+    details: Optional[Dict[str, Any]] = Field(None, description='Дополнительные детали')
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# Favorites Model
+class Favorite(BaseModel):
+    """Избранный объект"""
+    favorite_id: Optional[str] = Field(None, description='MongoDB ObjectId')
+    username: str = Field(..., description='Username')
+    object_id: int = Field(..., description='ID объекта (сегмент)')
+    object_name: str = Field(..., description='Название объекта')
+    pipeline: str = Field(..., description='Магистраль')
+    object_type: Optional[str] = Field(None, description='Тип объекта')
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 """

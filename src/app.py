@@ -237,6 +237,22 @@ def setup_routes():
     from api.auth_routes import router as auth_router
     app.include_router(auth_router)
     
+    # Users
+    from api.users import router as users_router
+    app.include_router(users_router)
+    
+    # Tasks
+    from api.tasks import router as tasks_router
+    app.include_router(tasks_router)
+    
+    # Audit Logs
+    from api.audit_logs import router as audit_logs_router
+    app.include_router(audit_logs_router)
+    
+    # Favorites
+    from api.favorites import router as favorites_router
+    app.include_router(favorites_router)
+    
     # Defects
     @app.get("/defects", tags=["Defects"],
              summary="Получить список дефектов",

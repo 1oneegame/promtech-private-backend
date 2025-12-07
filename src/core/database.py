@@ -92,6 +92,50 @@ class MongoDBConnection:
             admin_collection.create_index('username', unique=True)
             logger.info("Индексы для коллекции 'admin_users' созданы")
             
+            # Коллекция профилей пользователей
+            if 'user_profiles' not in self.db.list_collection_names():
+                self.db.create_collection('user_profiles')
+                logger.info("Создана коллекция 'user_profiles'")
+            
+            user_profiles_collection = self.db['user_profiles']
+            user_profiles_collection.create_index('username', unique=True)
+            
+            # Коллекция настроек пользователей
+            if 'user_settings' not in self.db.list_collection_names():
+                self.db.create_collection('user_settings')
+                logger.info("Создана коллекция 'user_settings'")
+            
+            user_settings_collection = self.db['user_settings']
+            user_settings_collection.create_index('username', unique=True)
+            
+            # Коллекция задач
+            if 'tasks' not in self.db.list_collection_names():
+                self.db.create_collection('tasks')
+                logger.info("Создана коллекция 'tasks'")
+            
+            tasks_collection = self.db['tasks']
+            tasks_collection.create_index('assigned_to')
+            tasks_collection.create_index('status')
+            tasks_collection.create_index('date')
+            
+            # Коллекция журнала аудита
+            if 'audit_logs' not in self.db.list_collection_names():
+                self.db.create_collection('audit_logs')
+                logger.info("Создана коллекция 'audit_logs'")
+            
+            audit_logs_collection = self.db['audit_logs']
+            audit_logs_collection.create_index('user')
+            audit_logs_collection.create_index('action')
+            audit_logs_collection.create_index('created_at')
+            
+            # Коллекция избранного
+            if 'favorites' not in self.db.list_collection_names():
+                self.db.create_collection('favorites')
+                logger.info("Создана коллекция 'favorites'")
+            
+            favorites_collection = self.db['favorites']
+            favorites_collection.create_index([('username', 1), ('object_id', 1)], unique=True)
+            
         except Exception as e:
             logger.warning(f"Ошибка при инициализации коллекций: {str(e)}")
     
