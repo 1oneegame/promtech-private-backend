@@ -137,6 +137,12 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("[STARTUP] ML модуль недоступен")
     
+    # Установить зависимости для admin роутов
+    from api.admin import set_repository, set_ml_dependencies
+    set_repository(defects_repository)
+    set_ml_dependencies(ml_classifier, ML_AVAILABLE)
+    logger.info("[STARTUP] Admin routes dependencies initialized")
+    
     yield
     
     # Shutdown
@@ -252,6 +258,10 @@ def setup_routes():
     # Favorites
     from api.favorites import router as favorites_router
     app.include_router(favorites_router)
+    
+    # Admin
+    from api.admin import router as admin_router
+    app.include_router(admin_router, prefix="/admin")
     
     # Defects
     @app.get("/defects", tags=["Defects"],
@@ -437,67 +447,7 @@ def setup_routes():
         deps = get_dependencies()
         return await export.export_to_json(deps['defects_repository'])
     
-    # Admin
-    from fastapi import Depends
-    from auth import require_admin
-    
-    @app.post("/admin/defects", tags=["Admin"], dependencies=[Depends(require_admin)],
-              summary="Создать новый дефект с ML предсказанием",
-              description="""🔒 **Требуется авторизация администратора.**
-              
-    Создает новый дефект в базе данных и автоматически предсказывает его критичность с помощью ML модели.
-    
-    **Заголовок запроса:**
-    ```
-    Authorization: Bearer <admin_token>
-    ```
-    
-    **Пример тела запроса:**
-    ```json
-    {
-      "segment_number": 3,
-      "measurement_distance_m": 5.803,
-      "pipeline_id": "MT-03",
-      "details": {
-        "type": "коррозия",
-        "parameters": {
-          "length_mm": 15.0,
-          "width_mm": 15.0,
-          "depth_percent": 11.0,
-          "wall_thickness_nominal_mm": 7.9
-        },
-        "location": {
-          "latitude": 48.479509,
-          "longitude": 57.665673,
-          "altitude": 265.0
-        },
-        "surface_location": "ВНШ",
-        "distance_to_weld_m": -1.471,
-        "erf_b31g_code": 0.48
-      }
-    }
-    ```
-    
-    **Пример ответа:**
-    ```json
-    {
-      "success": true,
-      "defect_id": "65716dae-81e2-402d-8610-b583fe56dd1a",
-      "severity": "medium",
-      "ml_prediction": {
-        "severity": "medium",
-        "probability": 0.85,
-        "model_type": "RandomForest"
-      }
-    }
-    ```
-    """)
-    async def create_defect(request: AdminDefectCreateRequest, current_user: dict = Depends(require_admin)):
-        deps = get_dependencies()
-        return await admin.create_defect_with_ml_prediction(
-            request, current_user, deps['defects_repository'], 
-            deps['ml_classifier'], deps['ml_available']
-        )
+    # Admin endpoints are now handled by admin router (included above)
     
     # ML
     @app.post("/ml/predict", tags=["ML"], 

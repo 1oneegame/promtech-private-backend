@@ -5,10 +5,11 @@ Admin endpoints
 from fastapi import APIRouter, HTTPException, Depends, status
 from datetime import datetime
 import logging
+from typing import Optional
 
 from core import (
     AdminDefectCreateRequest, DefectCreateResponse, DefectCreateDetailsResponse,
-    BulkUpdateResponse, Defect, DefectType, SurfaceLocation, SeverityLevel
+    BulkUpdateResponse, Defect, DefectType, SurfaceLocation, SeverityLevel, DefectsRepository
 )
 from auth import require_admin
 from parsers import CSVParser
@@ -17,14 +18,47 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Admin"])
 
+# Глобальные переменные для хранения зависимостей (устанавливаются из app.py)
+_repository_instance: Optional[DefectsRepository] = None
+_ml_classifier_instance = None
+_ml_available_flag = False
+
+def set_repository(repository: DefectsRepository):
+    """Установить репозиторий для admin роутов"""
+    global _repository_instance
+    _repository_instance = repository
+
+def set_ml_dependencies(ml_classifier, ml_available: bool):
+    """Установить ML зависимости для admin роутов"""
+    global _ml_classifier_instance, _ml_available_flag
+    _ml_classifier_instance = ml_classifier
+    _ml_available_flag = ml_available
+
+def get_defects_repository() -> DefectsRepository:
+    """Получить defects_repository"""
+    if _repository_instance is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Defects repository not initialized"
+        )
+    return _repository_instance
+
+def get_ml_classifier():
+    """Получить ml_classifier"""
+    return _ml_classifier_instance
+
+def get_ml_available() -> bool:
+    """Получить ml_available флаг"""
+    return _ml_available_flag
+
 
 @router.post("/reload", dependencies=[Depends(require_admin)])
 async def reload_data(
-    current_user: dict = Depends(require_admin),
-    defects_repository=None
+    current_user: dict = Depends(require_admin)
 ):
     """Перезагрузить данные из CSV (только для админов)"""
     try:
+        defects_repository = get_defects_repository()
         defects_repository.clear_all()
         
         parser = CSVParser(data_dir='data')
@@ -48,11 +82,11 @@ async def reload_data(
 
 @router.delete("/clear", dependencies=[Depends(require_admin)])
 async def clear_data(
-    current_user: dict = Depends(require_admin),
-    defects_repository=None
+    current_user: dict = Depends(require_admin)
 ):
     """Очистить все дефекты из БД (только для админов)"""
     try:
+        defects_repository = get_defects_repository()
         success = defects_repository.clear_all()
         
         logger.info(f"[ADMIN] User {current_user['username']} cleared all data")
@@ -62,20 +96,21 @@ async def clear_data(
         else:
             raise HTTPException(status_code=500, detail="Clear failed")
     except Exception as e:
-        logger.error(f"Error creating defect: {str(e)}")
+        logger.error(f"Error clearing data: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/admin/defects/update-all-severities", response_model=BulkUpdateResponse,
+@router.post("/defects/update-all-severities", response_model=BulkUpdateResponse,
              dependencies=[Depends(require_admin)],
              summary="Обновить критичность всех дефектов через ML")
 async def update_all_defect_severities(
-    current_user: dict = Depends(require_admin),
-    defects_repository=None,
-    ml_classifier=None,
-    ml_available=False
+    current_user: dict = Depends(require_admin)
 ):
     """Обновить severity для всех дефектов без него через ML предсказания"""
+    defects_repository = get_defects_repository()
+    ml_classifier = get_ml_classifier()
+    ml_available = get_ml_available()
+    
     if not ml_available or ml_classifier is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -160,18 +195,19 @@ async def update_all_defect_severities(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/admin/defects", response_model=DefectCreateResponse,
+@router.post("/defects", response_model=DefectCreateResponse,
              dependencies=[Depends(require_admin)],
              summary="Создать новый дефект с ML-предсказанием severity",
              status_code=status.HTTP_201_CREATED)
 async def create_defect_with_ml_prediction(
     request: AdminDefectCreateRequest,
-    current_user: dict = Depends(require_admin),
-    defects_repository=None,
-    ml_classifier=None,
-    ml_available=False
+    current_user: dict = Depends(require_admin)
 ):
     """Создать новый дефект с автоматическим определением критичности через ML"""
+    defects_repository = get_defects_repository()
+    ml_classifier = get_ml_classifier()
+    ml_available = get_ml_available()
+    
     if not ml_available or ml_classifier is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
