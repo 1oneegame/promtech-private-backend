@@ -25,11 +25,17 @@ def defect_to_response(defect):
         distance_to_weld_m=defect.distance_to_weld_m,
         erf_b31g_code=defect.erf_b31g_code
     )
+    
+    severity_value = None
+    if defect.severity:
+        severity_value = defect.severity.value if hasattr(defect.severity, 'value') else str(defect.severity)
+    
     return DefectResponse(
         defect_id=defect.defect_id,
         segment_number=defect.segment_number,
         measurement_distance_m=defect.measurement_distance_m,
         pipeline_id=defect.pipeline_id,
+        severity=severity_value,
         details=details
     )
 

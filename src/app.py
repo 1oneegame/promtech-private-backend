@@ -1,8 +1,3 @@
-"""
-IntegrityOS FastAPI Backend
-Упрощенная главная точка входа с подключением модулей
-"""
-
 import logging
 from contextlib import asynccontextmanager
 from typing import Optional, Union
@@ -12,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from core import MongoDBConnection, DefectsRepository, AdminUsersRepository, AdminUser, SeverityLevel, AdminDefectCreateRequest
 from parsers import CSVParser
-from api import health, auth_routes, defects, analytics, export, admin, ml_routes
+from api import health, auth_routes, defects, analytics, export, admin, ml_routes, reports
 from api.ml_routes import MLPredictionRequest, MLPredictionRequestNested
 from auth import set_admin_repository, get_password_hash
 
@@ -262,6 +257,31 @@ def setup_routes():
     # Admin
     from api.admin import router as admin_router
     app.include_router(admin_router, prefix="/admin")
+    
+    # Reports
+    from api import reports
+    
+    @app.get("/reports/generate", tags=["Reports"],
+             summary="Генерация отчета",
+             description="Генерирует отчет в формате HTML или PDF")
+    async def generate_report_endpoint(
+        report_type: str = "summary",
+        format: str = "html"
+    ):
+        deps = get_dependencies()
+        return await reports.generate_report(report_type, format, deps['defects_repository'])
+    
+    @app.get("/reports/history", tags=["Reports"],
+             summary="История отчетов",
+             description="Возвращает список последних сгенерированных отчетов")
+    async def get_reports_history_endpoint():
+        return await reports.get_reports_history()
+    
+    @app.get("/reports/download", tags=["Reports"],
+             summary="Скачать отчет",
+             description="Скачивание ранее сгенерированного отчета")
+    async def download_report_endpoint(filename: str):
+        return await reports.download_report(filename)
     
     # Defects
     @app.get("/defects", tags=["Defects"],

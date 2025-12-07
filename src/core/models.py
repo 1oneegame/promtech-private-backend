@@ -394,6 +394,7 @@ class DefectResponse(BaseModel):
     segment_number: int = Field(..., description="Номер сегмента")
     measurement_distance_m: float = Field(..., description="Расстояние измерения [м]")
     pipeline_id: str = Field(..., description="ID трубопровода")
+    severity: Optional[str] = Field(None, description="Уровень критичности (normal/medium/high)")
     details: DefectDetailsResponse = Field(..., description="Детальные параметры")
 
 
